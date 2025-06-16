@@ -35,4 +35,5 @@ exec python3 -m wyoming_faster_whisper \
     --language "$(bashio::config 'language')" \
     --initial-prompt "$(bashio::config 'initial_prompt')" \
     --data-dir /data \
-    --download-dir /data ${flags[@]}
+    --download-dir /data ${flags[@]} \
+    --device cuda
