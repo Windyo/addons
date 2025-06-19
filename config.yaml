@@ -4,6 +4,7 @@ slug: whisper-cuda
 name: Whisper-Cuda
 description: Speech-to-text with Whisper using GPU 
 url: https://github.com/windyo/addons/blob/master/
+protected: false
 full_access: true
 arch:
   - amd64
