@@ -1,9 +1,10 @@
 ---
 build_from:
-  amd64: nvidia/cuda:11.0.3-cudnn8-runtime-ubuntu20.04
-  aarch64: nvidia/cuda:11.0.3-cudnn8-runtime-ubuntu20.04
+  amd64: ghcr.io/home-assistant/amd64-base-debian:bookworm
+  aarch64: ghcr.io/home-assistant/aarch64-base-debian:bookworm
 codenotary:
   signer: notary@home-assistant.io
   base_image: notary@home-assistant.io
 args:
   WYOMING_WHISPER_VERSION: 2.5.0
+  DISTRO: debian12

@@ -30,9 +30,9 @@ fi
 # shellcheck disable=SC2068
 exec python3 -m wyoming_faster_whisper \
     --uri 'tcp://0.0.0.0:10300' \
-    --model "${model}" \
-    --beam-size "$(bashio::config 'beam_size')" \
-    --language "$(bashio::config 'language')" \
+    --model "turbo" \
+    --beam-size "5" \
+    --language "en_US" \
     --initial-prompt "$(bashio::config 'initial_prompt')" \
     --data-dir /data \
     --download-dir /data ${flags[@]} \

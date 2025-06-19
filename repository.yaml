@@ -1,0 +1,4 @@
+# https://developers.home-assistant.io/docs/add-ons/repository#repository-configuration
+name: Faster Whisper Cuda
+url: 'https://github.com/Windyo/addons/'
+maintainer: Windyo (kinda) 
