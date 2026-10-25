@@ -1,6 +1,6 @@
 ---
 name: Whisper CUDA
-version: 0.2.1
+version: 0.2.2
 slug: whisper-cuda
 description: >-
   Whisper speech-to-text on an NVIDIA GPU under HAOS (Pascal / driver 580),

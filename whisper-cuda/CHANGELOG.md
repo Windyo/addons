@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- Benchmark also measures Piper on the GPU vs the CPU (`bench_piper_gpu.sh`): onnxruntime-gpu 1.26.0
+  (last CUDA 12 build, sm_60 SASS) + cuDNN 9.10.2 (last with Pascal), in its own venv under /data.
+
 ## 0.2.1
 
 - Pin PyAV 18.1.0: PyAV 19 removed `open(metadata_errors=)`, which faster-whisper 1.2.1 passes

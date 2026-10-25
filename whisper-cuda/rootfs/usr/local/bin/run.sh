@@ -114,8 +114,14 @@ STT_ATTRS=$(jq -n --arg d "$DEVICE" --arg m "$MODEL" --arg c "$COMPUTE" --arg b 
 if [ "$(opt benchmark)" = true ]; then
   publish "$GPU_STATE" "$(jq -n --argjson a "$ATTRS" --argjson s "$STT_ATTRS" '$a + $s + {note: "benchmark running"}')"
   /usr/local/bin/bench.py 2>&1 | tee "$LOGS/bench.log"
+  if [ "$GPU_STATE" = gpu_ready ]; then
+    /usr/local/bin/bench_piper_gpu.sh 2>&1 | tee "$LOGS/bench_piper_gpu.log" || true
+  fi
   if [ -f /data/bench/results.json ]; then
-    publish_entity sensor.whisper_cuda_benchmark done "$(jq -c '{piper_cpu, results}' /data/bench/results.json)"
+    pg='{}'
+    [ -f /data/bench/piper_gpu.json ] && pg=$(jq -c . /data/bench/piper_gpu.json)
+    publish_entity sensor.whisper_cuda_benchmark done \
+      "$(jq -c --argjson pg "$pg" '{piper_cpu, piper_gpu: $pg, results}' /data/bench/results.json)"
   fi
 fi
 
