@@ -1,6 +1,6 @@
 ---
 name: Whisper CUDA
-version: 0.1.1
+version: 0.1.2
 slug: whisper-cuda
 description: >-
   Whisper speech-to-text on an NVIDIA GPU under HAOS (Pascal / driver 580).
@@ -19,6 +19,8 @@ kernel_modules: true
 privileged:
   - SYS_MODULE
   - MKNOD
+  # mount the kernel's devtmpfs to create /dev/nvidia* (the add-on's /dev is read-only)
+  - SYS_ADMIN
 apparmor: false
 # Publishes sensor.whisper_cuda_status to Home Assistant.
 homeassistant_api: true

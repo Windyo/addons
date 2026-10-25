@@ -35,15 +35,27 @@ if ! grep -q '^nvidia_uvm ' /proc/modules; then
   insmod "$DIR/nvidia-uvm.ko"
 fi
 
-mk() { [ -e "$1" ] || mknod -m 666 "$1" c "$2" "$3"; }
-mk /dev/nvidiactl 195 255
+# The Supervisor bind-mounts the host's /dev read-only into every add-on, and the proprietary
+# driver doesn't create its nodes itself (nvidia-modprobe/udev do that on other distros).
+# Mount the kernel's devtmpfs (the same instance behind the host's /dev) at a private path, create
+# the nodes there, and they appear in /dev here too. Needs CAP_SYS_ADMIN.
+DT=/run/nv-devtmpfs
+mkdir -p "$DT"
+mountpoint -q "$DT" || mount -t devtmpfs devtmpfs "$DT"
+mk() { [ -e "$DT/$1" ] || mknod -m 666 "$DT/$1" c "$2" "$3"; }
+mk nvidiactl 195 255
 n=0
 for _ in /proc/driver/nvidia/gpus/*; do
-  mk "/dev/nvidia${n}" 195 "$n"
+  mk "nvidia${n}" 195 "$n"
   n=$((n + 1))
 done
 uvm=$(awk '$2 == "nvidia-uvm" { print $1 }' /proc/devices)
-[ -n "$uvm" ] || { log "ERROR: nvidia-uvm has no char major"; exit 13; }
-mk /dev/nvidia-uvm "$uvm" 0
-mk /dev/nvidia-uvm-tools "$uvm" 1
+[ -n "$uvm" ] || { umount "$DT"; log "ERROR: nvidia-uvm has no char major"; exit 13; }
+mk nvidia-uvm "$uvm" 0
+mk nvidia-uvm-tools "$uvm" 1
+umount "$DT"
+
+for d in nvidiactl nvidia0 nvidia-uvm nvidia-uvm-tools; do
+  [ -c "/dev/$d" ] || { log "ERROR: /dev/$d not visible in the container"; exit 14; }
+done
 log "device nodes ready (${n} GPU)"
