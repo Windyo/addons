@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Apply HAOS's own kernel patches (fetched for the installed OS version, bundled 18.3 set as
+  fallback). Without them the config drift gate rejected `CONFIG_IPV6_REACHABILITY_PROBE`.
+
 ## 0.1.0
 
 - Rewrite. Phase 1: builds NVIDIA 580.196.07 (`nvidia`, `nvidia-uvm`) for the running HAOS

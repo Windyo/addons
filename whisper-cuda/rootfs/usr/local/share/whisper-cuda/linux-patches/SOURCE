@@ -1,0 +1,1 @@
+HAOS 18.3 buildroot-external/patches/linux (fallback when the device can't fetch its own version)

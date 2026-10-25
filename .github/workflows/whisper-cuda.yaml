@@ -53,7 +53,7 @@ jobs:
           docker run --rm \
             -v "$PWD/whisper-cuda/tests:/tests:ro" -v "$RUNNER_TEMP/out:/out" \
             whisper-cuda:test \
-            nv-build-modules.sh 6.18.52-haos /tests/haos-18.3-kernel.config /out/6.18.52-haos "$(nproc)" \
+            nv-build-modules.sh 6.18.52-haos /tests/haos-18.3-kernel.config /out/6.18.52-haos "$(nproc)" /usr/local/share/whisper-cuda/linux-patches \
             2>&1 | tee "$RUNNER_TEMP/out/build.log"
 
       - name: Check result

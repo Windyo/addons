@@ -1,6 +1,6 @@
 ---
 name: Whisper CUDA
-version: 0.1.0
+version: 0.1.1
 slug: whisper-cuda
 description: >-
   Whisper speech-to-text on an NVIDIA GPU under HAOS (Pascal / driver 580).
@@ -22,6 +22,8 @@ privileged:
 apparmor: false
 # Publishes sensor.whisper_cuda_status to Home Assistant.
 homeassistant_api: true
+# Reads the installed HAOS version (/os/info) to fetch that release's kernel patches.
+hassio_api: true
 options:
   load_driver: false
   build_jobs: 4

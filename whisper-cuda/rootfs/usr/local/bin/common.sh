@@ -34,3 +34,27 @@ hold() {
     sleep 300
   done
 }
+
+# fetch_haos_patches -> prints a directory holding HAOS's kernel patches for the installed OS
+# version (from the operating-system repo at that tag). Falls back to the bundled 18.3 copy.
+fetch_haos_patches() {
+  local ver dir api list
+  ver=$(curl -fsS -m 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN:-}" http://supervisor/os/info \
+        | jq -r '.data.version // empty' 2>/dev/null)
+  if [ -n "$ver" ]; then
+    dir="$DATA/haos-patches/$ver"
+    if [ -f "$dir/.complete" ]; then echo "$dir"; return; fi
+    api="https://api.github.com/repos/home-assistant/operating-system/contents/buildroot-external/patches/linux?ref=${ver}"
+    if list=$(curl -fsS -m 20 "$api" | jq -r '.[] | select(.name | endswith(".patch")) | "\(.name) \(.download_url)"'); then
+      rm -rf "$dir"; mkdir -p "$dir"
+      local ok=1 name url
+      while read -r name url; do
+        [ -n "$name" ] || continue
+        curl -fsS -m 30 -o "$dir/$name" "$url" || ok=0
+      done <<< "$list"
+      if [ "$ok" = 1 ]; then touch "$dir/.complete"; log "HAOS $ver kernel patches: $(ls "$dir" | wc -l)" >&2; echo "$dir"; return; fi
+    fi
+    log "WARNING: could not fetch kernel patches for HAOS $ver, using the bundled 18.3 set" >&2
+  fi
+  echo /usr/local/share/whisper-cuda/linux-patches
+}

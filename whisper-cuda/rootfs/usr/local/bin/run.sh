@@ -32,10 +32,11 @@ if [ ! -f "$CACHE/nvidia.ko" ]; then
   publish building "$(jq -n --argjson g "$GPU_ATTRS" --arg j "$JOBS" \
     '$g + {note: "first start on this kernel: about 10-20 min", jobs: $j}')"
   BLOG="$LOGS/build-${KREL}.log"
+  PATCH_DIR=$(fetch_haos_patches)
   (
     flock -n 9 || { echo "another build is running"; exit 1; }
     rm -rf "$CACHE.tmp"
-    /usr/local/bin/nv-build-modules.sh "$KREL" /proc/config.gz "$CACHE.tmp" "$JOBS" \
+    /usr/local/bin/nv-build-modules.sh "$KREL" /proc/config.gz "$CACHE.tmp" "$JOBS" "$PATCH_DIR" \
       && mv "$CACHE.tmp" "$CACHE"
   ) 9> "$DATA/build.lock" > "$BLOG" 2>&1
   if [ ! -f "$CACHE/nvidia.ko" ]; then

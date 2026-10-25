@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build nvidia.ko + nvidia-uvm.ko for one exact kernel.
 #
-#   nv-build-modules.sh <kernel-release> <kernel-config[.gz]> <out-dir> [jobs]
+#   nv-build-modules.sh <kernel-release> <kernel-config[.gz]> <out-dir> [jobs] [patch-dir]
+#
+# patch-dir: HAOS's own kernel patches (buildroot-external/patches/linux), applied in order.
 #
 # The HAOS kernel has MODVERSIONS and MODULE_FORCE_LOAD off, so a module loads only if its
 # vermagic matches the running kernel exactly. We therefore build against the upstream source
@@ -14,6 +16,7 @@ KREL=${1:?kernel release, e.g. 6.18.52-haos}
 KCONFIG=${2:?kernel config path}
 OUT=${3:?output dir}
 JOBS=${4:-4}
+PATCHES=${5:-}
 NV_VERSION=$(cat /opt/nvidia/VERSION)
 ALLOW=/usr/local/share/whisper-cuda/config-drift-allow.txt
 
@@ -38,6 +41,16 @@ echo "${want}  linux.tar.xz" | sha256sum -c -
 tar -xf linux.tar.xz
 rm -f linux.tar.xz
 K="$WORK/linux-${KVER}"
+
+: > "$OUT/patches.txt"
+if [ -n "$PATCHES" ]; then
+  for p in "$PATCHES"/*.patch; do
+    [ -e "$p" ] || continue
+    step "Applying HAOS patch ${p##*/}"
+    patch -d "$K" -p1 --forward --quiet < "$p"
+    echo "${p##*/}" >> "$OUT/patches.txt"
+  done
+fi
 
 step "Configuring from $KCONFIG"
 case "$KCONFIG" in
