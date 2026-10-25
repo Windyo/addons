@@ -1,0 +1,18 @@
+---
+configuration:
+  load_driver:
+    name: Load the NVIDIA driver
+    description: >-
+      Off: only build the driver for the running kernel and report the result.
+      On: load it into the HAOS kernel and enable the GPU. A crash in the driver
+      takes the whole system down, so switch this on while someone is home.
+  build_jobs:
+    name: Build jobs
+    description: >-
+      Parallel compile jobs for the one-time driver build after each HAOS update.
+      Lower keeps Home Assistant more responsive during the build.
+  retry_after_crash:
+    name: Retry after a crash
+    description: >-
+      If a load attempt never finished before a reboot, the add-on refuses to load
+      again. Switch this on to allow one more attempt, then switch it back off.

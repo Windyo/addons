@@ -1,0 +1,76 @@
+name: whisper-cuda
+
+on:
+  push:
+    paths:
+      - "whisper-cuda/**"
+      - ".github/workflows/whisper-cuda.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: whisper-cuda-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read add-on version
+        id: meta
+        run: |
+          echo "version=$(yq -r .version whisper-cuda/config.yaml)" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/whisper-cuda-amd64" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: whisper-cuda
+          load: true
+          tags: whisper-cuda:test
+          build-args: BUILD_VERSION=${{ steps.meta.outputs.version }}
+
+      - name: Shell syntax
+        run: |
+          docker run --rm whisper-cuda:test bash -c \
+            'for f in /usr/local/bin/*.sh; do bash -n "$f" || exit 1; done; nvidia-smi --version | head -1 || true; ldconfig -p | grep -E "libcuda|libnvidia-ml"'
+
+      # The same script the add-on runs on the device, against the config read out of the
+      # official HAOS 18.3 kernel (IKCONFIG). Proves the driver builds for that exact kernel.
+      - name: Compile driver for HAOS 18.3 (6.18.52-haos)
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          docker run --rm \
+            -v "$PWD/whisper-cuda/tests:/tests:ro" -v "$RUNNER_TEMP/out:/out" \
+            whisper-cuda:test \
+            nv-build-modules.sh 6.18.52-haos /tests/haos-18.3-kernel.config /out/6.18.52-haos "$(nproc)"
+
+      - name: Check result
+        run: |
+          d="$RUNNER_TEMP/out/6.18.52-haos"
+          ls -la "$d"
+          echo "vermagic: '$(cat "$d/vermagic")'"
+          echo "config drift:"; cat "$d/config-drift.txt"
+          test "$(cat "$d/vermagic")" = "6.18.52-haos SMP preempt mod_unload "
+          docker run --rm -v "$d:/m:ro" whisper-cuda:test modinfo /m/nvidia.ko /m/nvidia-uvm.ko
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: driver-6.18.52-haos
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
+
+      - name: Push to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag whisper-cuda:test "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
+          docker push "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"

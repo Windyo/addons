@@ -1,0 +1,32 @@
+---
+name: Whisper CUDA
+version: 0.1.0
+slug: whisper-cuda
+description: >-
+  Whisper speech-to-text on an NVIDIA GPU under HAOS (Pascal / driver 580).
+  Phase 1: builds and loads the NVIDIA driver only.
+url: https://github.com/windyo/addons/tree/master/whisper-cuda
+arch:
+  - amd64
+image: ghcr.io/windyo/whisper-cuda-{arch}
+startup: services
+# Never start on boot until the driver has proven stable on this machine.
+boot: manual
+# Device rule "a *:* rwm": the /dev/nvidia* nodes created after loading are usable.
+full_access: true
+# CAP_SYS_MODULE + host /lib/modules (read-only) for the vermagic reference and deps.
+kernel_modules: true
+privileged:
+  - SYS_MODULE
+  - MKNOD
+apparmor: false
+# Publishes sensor.whisper_cuda_status to Home Assistant.
+homeassistant_api: true
+options:
+  load_driver: false
+  build_jobs: 4
+  retry_after_crash: false
+schema:
+  load_driver: bool
+  build_jobs: int(1,8)
+  retry_after_crash: bool
