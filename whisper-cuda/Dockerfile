@@ -14,7 +14,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bc bison build-essential ca-certificates cpio curl flex gcc-13 jq kmod \
-        libelf-dev libssl-dev patch pciutils perl python3 util-linux xz-utils zstd \
+        libelf-dev libssl-dev netcat-openbsd patch pciutils perl python3 python3-venv \
+        util-linux xz-utils zstd \
     && rm -rf /var/lib/apt/lists/*
 
 # NVIDIA driver: proprietary kernel module sources (Pascal is not supported by the open
@@ -36,13 +37,29 @@ RUN set -eux; \
     echo "${NV_VERSION}" > /opt/nvidia/VERSION; \
     rm -rf /tmp/nv /tmp/nv.run
 
+# Whisper server + benchmark. CTranslate2's x86 wheel is built without cuDNN, so cuBLAS 12 is the
+# only CUDA library needed (cuDNN >= 9.11 dropped Pascal anyway). cuBLAS 12.9 still ships sm_61.
+COPY requirements.lock /tmp/requirements.lock
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --only-binary=:all: -r /tmp/requirements.lock \
+    && echo /opt/venv/lib/python3.12/site-packages/nvidia/cublas/lib > /etc/ld.so.conf.d/cublas.conf \
+    && ldconfig \
+    && rm /tmp/requirements.lock
+ENV HF_HOME=/data/hf \
+    HF_HUB_DISABLE_TELEMETRY=1
+
 COPY rootfs/ /
-RUN chmod 0755 /usr/local/bin/*.sh
+RUN chmod 0755 /usr/local/bin/*.sh /usr/local/bin/*.py
 
 LABEL io.hass.type="addon" \
       io.hass.arch="amd64" \
       io.hass.version="${BUILD_VERSION}" \
       io.hass.name="Whisper CUDA" \
       org.opencontainers.image.source="https://github.com/windyo/addons"
+
+# Healthy once the Wyoming server answers. The long start period covers a driver rebuild after an
+# HAOS update, the first model download and an optional benchmark, so they are never interrupted.
+HEALTHCHECK --start-period=90m --interval=60s --timeout=5s --retries=5 \
+    CMD nc -z -w 3 127.0.0.1 10300 || exit 1
 
 CMD ["/usr/local/bin/run.sh"]

@@ -40,10 +40,29 @@ jobs:
           tags: whisper-cuda:test
           build-args: BUILD_VERSION=${{ steps.meta.outputs.version }}
 
-      - name: Shell syntax
+      - name: Shell syntax and Python environment
         run: |
-          docker run --rm whisper-cuda:test bash -c \
-            'for f in /usr/local/bin/*.sh; do bash -n "$f" || exit 1; done; nvidia-smi --version | head -1 || true; ldconfig -p | grep -E "libcuda|libnvidia-ml"'
+          docker run --rm whisper-cuda:test bash -c '
+            set -e
+            for f in /usr/local/bin/*.sh; do bash -n "$f"; done
+            /opt/venv/bin/python -m py_compile /usr/local/bin/bench.py
+            /opt/venv/bin/python -c "import ctranslate2, faster_whisper, wyoming_faster_whisper, piper, aiohttp; print(ctranslate2.__version__)"
+            /opt/venv/bin/python -m wyoming_faster_whisper --version
+            ldconfig -p | grep -E "libcuda.so.1|libnvidia-ml.so.1|libcublas.so.12|libcublasLt.so.12"
+            nvidia-smi --version | head -1 || true'
+
+      # End-to-end on CPU: Piper test speech -> faster-whisper -> scoring. Gates the push, since a
+      # broken Whisper server would take speech-to-text down on the device.
+      - name: CPU benchmark smoke test
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/data"
+          docker run --rm -v "$RUNNER_TEMP/data:/data" whisper-cuda:test \
+            /usr/local/bin/bench.py "CPU base int8 b5" 2>&1 | tee "$RUNNER_TEMP/bench.log"
+          r="$RUNNER_TEMP/data/bench/results.json"
+          jq -e '.results[0] | (.error | not) and .en_clean.wer_pct < 40 and .fr_clean.wer_pct < 60' "$r"
+          echo "::notice title=CPU smoke benchmark::$(jq -c '.results[0] | {latency_mean_s, fr_clean, en_clean, fr_noisy, en_noisy, silence_halluc_words}' "$r")"
+          echo "::notice title=Piper CPU synthesis::$(jq -c .piper_cpu "$r")"
 
       - name: Push to GHCR
         run: |
@@ -92,9 +111,11 @@ jobs:
       - name: Report failure details
         if: failure()
         run: |
+          mkdir -p "$RUNNER_TEMP/out"
           d="$RUNNER_TEMP/out/6.18.52-haos"
           tail -n 80 "$RUNNER_TEMP/out/build.log" > "$RUNNER_TEMP/out/build-tail.txt" 2>/dev/null || true
-          for f in "$d/config-drift-detail.txt" "$RUNNER_TEMP/out/build-tail.txt"; do
+          tail -n 60 "$RUNNER_TEMP/bench.log" > "$RUNNER_TEMP/bench-tail.txt" 2>/dev/null || true
+          for f in "$d/config-drift-detail.txt" "$RUNNER_TEMP/out/build-tail.txt" "$RUNNER_TEMP/bench-tail.txt"; do
             [ -s "$f" ] || continue
             body=$(head -c 30000 "$f" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
             echo "::error title=$(basename "$f")::$body"

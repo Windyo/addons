@@ -1,10 +1,10 @@
 ---
 name: Whisper CUDA
-version: 0.1.2
+version: 0.2.0
 slug: whisper-cuda
 description: >-
-  Whisper speech-to-text on an NVIDIA GPU under HAOS (Pascal / driver 580).
-  Phase 1: builds and loads the NVIDIA driver only.
+  Whisper speech-to-text on an NVIDIA GPU under HAOS (Pascal / driver 580),
+  with automatic CPU fallback.
 url: https://github.com/windyo/addons/tree/master/whisper-cuda
 arch:
   - amd64
@@ -22,15 +22,33 @@ privileged:
   # mount the kernel's devtmpfs to create /dev/nvidia* (the add-on's /dev is read-only)
   - SYS_ADMIN
 apparmor: false
-# Publishes sensor.whisper_cuda_status to Home Assistant.
+# Publishes sensor.whisper_cuda_status; reads exposed names for biasing.
 homeassistant_api: true
 # Reads the installed HAOS version (/os/info) to fetch that release's kernel patches.
 hassio_api: true
+discovery:
+  - wyoming
+ports:
+  "10300/tcp": null
 options:
   load_driver: false
+  model: large-v3-turbo
+  compute_type: int8_float32
+  beam_size: 5
+  ha_name_biasing: false
+  cpu_fallback_model: small
+  benchmark: false
   build_jobs: 4
   retry_after_crash: false
+  debug: false
 schema:
   load_driver: bool
+  model: str
+  compute_type: list(int8_float32|float32|int8|float16|int8_float16)
+  beam_size: int(1,10)
+  ha_name_biasing: bool
+  cpu_fallback_model: str
+  benchmark: bool
   build_jobs: int(1,8)
   retry_after_crash: bool
+  debug: bool

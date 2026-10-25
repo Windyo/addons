@@ -3,7 +3,7 @@
 Runs the NVIDIA driver on Home Assistant OS so Whisper can use an NVIDIA GPU.
 Built for a GTX 1070 (Pascal), which needs the **580** driver branch.
 
-**Phase 1 (this version):** the add-on builds the driver and loads it. Whisper is not included yet.
+It serves Whisper speech-to-text over Wyoming on port 10300. Home Assistant discovers it automatically. If the GPU is unavailable it falls back to the CPU.
 
 ## How it works
 
@@ -15,7 +15,8 @@ HAOS has no NVIDIA driver and no NVIDIA container runtime. This add-on:
 3. checks that the module's version magic matches the running kernel exactly,
 4. loads `nvidia.ko` and `nvidia-uvm.ko` into the HAOS kernel and creates `/dev/nvidia*`
    inside the container,
-5. reports to Home Assistant as `sensor.whisper_cuda_status`.
+5. starts faster-whisper on the GPU (or on the CPU as a fallback),
+6. reports to Home Assistant as `sensor.whisper_cuda_status`.
 
 After an HAOS update the kernel changes, and the add-on builds the driver again on its next start.
 
@@ -32,6 +33,13 @@ After an HAOS update the kernel changes, and the add-on builds the driver again 
 | `load_driver` | `false` | Off: build and verify only. On: load the driver into the kernel. |
 | `build_jobs` | `4` | Compile jobs for the build. |
 | `retry_after_crash` | `false` | Allow one more load after an attempt that never finished before a reboot. |
+| `model` | `large-v3-turbo` | Whisper model on the GPU. |
+| `compute_type` | `int8_float32` | `int8_float32` or `float32` on Pascal; `float16` is slow there. |
+| `beam_size` | `5` | 1 = fastest; 5 = usual accuracy setting. |
+| `ha_name_biasing` | `false` | Prompt Whisper with the names exposed to Assist. |
+| `cpu_fallback_model` | `small` | Model used on the CPU when the GPU is unavailable. |
+| `benchmark` | `false` | Benchmark configurations at start and publish `sensor.whisper_cuda_benchmark`. |
+| `debug` | `false` | Verbose server logs. |
 
 ## Status sensor
 

@@ -23,6 +23,26 @@ publish() {
     || log "WARNING: could not publish status"
 }
 
+# publish_entity <entity_id> <state> <json-attributes>
+publish_entity() {
+  [ -n "${SUPERVISOR_TOKEN:-}" ] || return 0
+  jq -n --arg s "$2" --argjson a "$3" '{state: $s, attributes: $a}' \
+    | curl -fsS -m 10 -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" -H "Content-Type: application/json" \
+        -d @- "http://supervisor/core/api/states/$1" > /dev/null \
+    || log "WARNING: could not publish $1"
+}
+
+# discover_wyoming <uri>: announce the server so Home Assistant offers to add it.
+discover_wyoming() {
+  [ -n "${SUPERVISOR_TOKEN:-}" ] || return 0
+  jq -n --arg u "$1" '{service: "wyoming", config: {uri: $u}}' \
+    | curl -fsS -m 10 -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" -H "Content-Type: application/json" \
+        -d @- http://supervisor/discovery > /dev/null \
+    && log "announced $1 to Home Assistant" || log "WARNING: discovery failed"
+}
+
 # tail_json <file> [lines] -> JSON string with the last lines of a log
 tail_json() { tail -n "${2:-25}" "$1" 2>/dev/null | jq -Rs . ; }
 

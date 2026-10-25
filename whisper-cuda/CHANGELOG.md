@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Phase 2: Wyoming faster-whisper 3.8.1 server on port 10300, announced to Home Assistant.
+  CUDA through CTranslate2 4.8.3 + cuBLAS 12.9 (both ship Pascal sm_61 code; no cuDNN needed).
+- Automatic CPU fallback whenever the GPU stage fails, so speech-to-text keeps working.
+- Options: model, compute_type, beam_size, ha_name_biasing, cpu_fallback_model, benchmark, debug.
+- Benchmark (option): Piper-synthesised French/English commands for this house, clean and noisy,
+  across models, compute types, beam sizes and name biasing; results in sensor.whisper_cuda_benchmark.
+- Full Python dependency lock (requirements.lock).
+
 ## 0.1.2
 
 - Create `/dev/nvidia*` through a private devtmpfs mount: the Supervisor gives every add-on a

@@ -16,3 +16,33 @@ configuration:
     description: >-
       If a load attempt never finished before a reboot, the add-on refuses to load
       again. Switch this on to allow one more attempt, then switch it back off.
+  model:
+    name: Whisper model (GPU)
+    description: >-
+      faster-whisper model used on the GPU, e.g. large-v3-turbo, large-v3, medium, small,
+      or a Hugging Face CTranslate2 repo id. Downloaded once into the add-on data.
+  compute_type:
+    name: Compute type (GPU)
+    description: >-
+      int8_float32 or float32 on Pascal cards (GTX 10xx). float16 runs at a fraction of
+      the speed on Pascal and is only useful on Turing (RTX 20xx) and newer.
+  beam_size:
+    name: Beam size
+    description: Candidates kept while decoding. 1 is fastest, 5 is Whisper's usual accuracy setting.
+  ha_name_biasing:
+    name: Bias toward Home Assistant names
+    description: >-
+      Prompt Whisper with the names of entities, areas and floors exposed to Assist so
+      they are recognised more reliably.
+  cpu_fallback_model:
+    name: CPU fallback model
+    description: Model used (int8, on the CPU) when the GPU is unavailable.
+  benchmark:
+    name: Run the benchmark at start
+    description: >-
+      Benchmark model and setting combinations on this machine before serving, then
+      publish the results as sensor.whisper_cuda_benchmark. Takes 20-40 minutes and
+      downloads several models the first time. Switch back off afterwards.
+  debug:
+    name: Debug logging
+    description: Verbose logs from the Whisper server.
