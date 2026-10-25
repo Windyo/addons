@@ -20,7 +20,8 @@ configuration:
     name: Whisper model (GPU)
     description: >-
       faster-whisper model used on the GPU, e.g. large-v3-turbo, large-v3, medium, small,
-      or a Hugging Face CTranslate2 repo id. Downloaded once into the add-on data.
+      a Hugging Face CTranslate2 repo id, or hf:owner/repo#subfolder for weights published
+      in a subfolder (e.g. hf:bofenghuang/whisper-large-v3-french#ctranslate2).
   compute_type:
     name: Compute type (GPU)
     description: >-

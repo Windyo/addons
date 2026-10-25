@@ -202,6 +202,10 @@ trap '[ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2> /dev/null; exit 0' TERM INT
 while true; do
   dev=$(stt_mode)
   if [ "$dev" = cuda ]; then model=$GPU_MODEL; compute=$GPU_COMPUTE; else model=$CPU_MODEL; compute=int8; fi
+  # "hf:owner/repo#subfolder": CTranslate2 weights inside a larger repo -> download, pass the path.
+  case "$model" in
+    hf:*) model=$(/opt/venv/bin/python3 -c 'import sys; sys.path.insert(0, "/usr/local/bin"); from bench import resolve_model; print(resolve_model(sys.argv[1]))' "$model") ;;
+  esac
   args=(--uri tcp://0.0.0.0:10300 --stt-library faster-whisper --model "$model" --device "$dev"
         --compute-type "$compute" --beam-size "$BEAM" --language auto
         --data-dir /data/models --download-dir /data/models)

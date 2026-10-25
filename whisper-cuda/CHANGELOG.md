@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5
+
+- Accuracy-first candidates: large-v3 and the French fine-tune bofenghuang/whisper-large-v3-french
+  (CTranslate2 weights in its `ctranslate2/` subfolder), both beam 5 + names + VAD, against turbo.
+- Model spec `hf:owner/repo#subfolder` for the server and the benchmark; per-config language filter.
+
 ## 0.2.4
 
 - Thermal guard: GPU >= 85 C or hardware thermal slowdown -> serve from the CPU until <= 72 C.

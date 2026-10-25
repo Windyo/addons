@@ -253,12 +253,27 @@ def ha_prompt(model) -> str | None:
 
 
 # ---------------------------------------------------------------------------------------------
+def resolve_model(spec: str) -> str:
+    """'hf:owner/repo#subfolder' -> local path of that subfolder (CTranslate2 weights published
+    inside a larger repo, e.g. bofenghuang/whisper-large-v3-french#ctranslate2). Anything else is
+    passed to faster-whisper unchanged (a size name or a repo id)."""
+    if not spec.startswith("hf:"):
+        return spec
+    from huggingface_hub import snapshot_download
+
+    repo, _, sub = spec[3:].partition("#")
+    root = snapshot_download(repo, allow_patterns=[f"{sub}/*"] if sub else None, cache_dir=str(MODELS))
+    return str(Path(root) / sub) if sub else root
+
+
 def run_config(cfg: dict, clips: list[dict]) -> dict:
     from faster_whisper import WhisperModel
 
     log(f"=== {cfg['name']}")
+    if cfg.get("langs"):
+        clips = [c for c in clips if c["lang"] in cfg["langs"]]
     t0 = time.perf_counter()
-    model = WhisperModel(cfg["model"], device=cfg["device"], compute_type=cfg["compute_type"],
+    model = WhisperModel(resolve_model(cfg["model"]), device=cfg["device"], compute_type=cfg["compute_type"],
                          cpu_threads=cfg.get("threads", 4), download_root=str(MODELS))
     load_s = time.perf_counter() - t0
     vram = vram_used_mib() if cfg["device"] == "cuda" else None
@@ -346,6 +361,10 @@ GPU_CONFIGS = [
     {"name": "turbo int8 b3 +names", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 3, "prompt": True},
     {"name": "turbo int8 b1 +names +vad", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 1, "prompt": True, "vad": True},
     {"name": "turbo int8 b1 +vad", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 1, "vad": True},
+    {"name": "turbo int8 b5 +names +vad", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 5, "prompt": True, "vad": True},
+    {"name": "large-v3 int8 b5 +names +vad", "model": "large-v3", "compute_type": "int8_float32", "beam": 5, "prompt": True, "vad": True},
+    {"name": "fr-large-v3 int8 b5 +names +vad", "model": "hf:bofenghuang/whisper-large-v3-french#ctranslate2",
+     "compute_type": "int8_float32", "beam": 5, "prompt": True, "vad": True, "langs": ["fr"]},
     {"name": "turbo fp32 b1", "model": "large-v3-turbo", "compute_type": "float32", "beam": 1},
     {"name": "large-v3 int8 b1", "model": "large-v3", "compute_type": "int8_float32", "beam": 1},
     {"name": "medium int8 b1", "model": "medium", "compute_type": "int8_float32", "beam": 1},
