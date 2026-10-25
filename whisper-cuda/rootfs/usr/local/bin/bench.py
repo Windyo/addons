@@ -316,6 +316,8 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
 
     def agg(sel):
         rs = [r for r in rows if sel(r)]
+        if not rs:  # e.g. a French-only config has no English clips
+            return None
         return {"n": len(rs), "wer_pct": round(100 * statistics.mean(r["wer"] for r in rs), 1),
                 "exact_pct": round(100 * statistics.mean(r["exact"] for r in rs), 1)}
 
@@ -342,6 +344,8 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
         "slowest": [{"text": r["text"], "kind": r["kind"], "voice": r["voice"],
                      "latency_s": round(r["latency_s"], 2), "fallbacks": r["fallbacks"], "hyp": r["hyp"][:120]}
                     for r in sorted(rows, key=lambda r: -r["latency_s"])[:3]],
+        "misses": [f"[{r['lang']} {r['voice']} {r['kind']}] {r['text']} -> {r['hyp'][:80]}"
+                   for r in rows if (r["kind"] != "silence" and not r["exact"]) or r["halluc_words"]],
     }
     log(json.dumps(res, ensure_ascii=False))
     for r in rows:
@@ -364,6 +368,8 @@ GPU_CONFIGS = [
     {"name": "turbo int8 b5 +names +vad", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 5, "prompt": True, "vad": True},
     {"name": "large-v3 int8 b5 +names +vad", "model": "large-v3", "compute_type": "int8_float32", "beam": 5, "prompt": True, "vad": True},
     {"name": "fr-large-v3 int8 b5 +names +vad", "model": "hf:bofenghuang/whisper-large-v3-french#ctranslate2",
+     "compute_type": "int8_float32", "beam": 5, "prompt": True, "vad": True, "langs": ["fr"]},
+    {"name": "fr-distil int8 b5 +names +vad", "model": "hf:bofenghuang/whisper-large-v3-french-distil-dec16#ctranslate2",
      "compute_type": "int8_float32", "beam": 5, "prompt": True, "vad": True, "langs": ["fr"]},
     {"name": "turbo fp32 b1", "model": "large-v3-turbo", "compute_type": "float32", "beam": 1},
     {"name": "large-v3 int8 b1", "model": "large-v3", "compute_type": "int8_float32", "beam": 1},

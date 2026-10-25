@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6
+
+- Fix: a language-restricted config (the French fine-tune) crashed the benchmark when scoring the
+  language it skips ("mean requires at least one data point"). Empty groups now report null.
+- Each result lists its misses (reference -> transcript), so the choice can be made on the errors.
+- New candidate: bofenghuang/whisper-large-v3-french-distil-dec16 (French, 16-layer decoder).
+
 ## 0.2.5
 
 - Accuracy-first candidates: large-v3 and the French fine-tune bofenghuang/whisper-large-v3-french
