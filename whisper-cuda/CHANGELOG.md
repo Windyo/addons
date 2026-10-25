@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.4
+
+- Thermal guard: GPU >= 85 C or hardware thermal slowdown -> serve from the CPU until <= 72 C.
+  (A sustained benchmark reached 97 C, throttled to 139 MHz, then Xid 13/62/154/79: GPU fell off the bus.)
+- Defaults from the benchmark: beam 1 + HA name biasing (beam-5 accuracy at beam-1 cost) + VAD filter
+  (silence no longer triggers six fallback re-decodes into junk).
+- Benchmark waits for the GPU to cool (<= 65 C before a config, <= 70 C whenever it reaches 80 C).
+- Removed the Piper GPU experiment: no gain for the French voice (0.092 s CPU vs 0.097 s GPU), and it
+  was running when the GPU faulted. Piper stays on the CPU.
+
 ## 0.2.3
 
 - Benchmark runs a chosen short list (`benchmark_configs`, default 3 candidates) instead of everything.

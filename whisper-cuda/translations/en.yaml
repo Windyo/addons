@@ -34,23 +34,24 @@ configuration:
     description: >-
       Prompt Whisper with the names of entities, areas and floors exposed to Assist so
       they are recognised more reliably.
+  vad_filter:
+    name: Skip non-speech (VAD filter)
+    description: >-
+      Run Silero VAD first and decode only speech. Audio with no speech (false wake-ups,
+      TV noise) returns nothing instead of being re-decoded up to six times into junk.
   cpu_fallback_model:
     name: CPU fallback model
     description: Model used (int8, on the CPU) when the GPU is unavailable.
   benchmark:
     name: Run the benchmark at start
     description: >-
-      Benchmark model and setting combinations on this machine before serving, then
-      publish the results as sensor.whisper_cuda_benchmark. Takes 20-40 minutes and
-      downloads several models the first time. Switch back off afterwards.
+      Benchmark the configurations listed below before serving, then publish the results as
+      sensor.whisper_cuda_benchmark. Waits for the GPU to cool between clips. Switch back off afterwards.
   benchmark_configs:
     name: Benchmark configurations
     description: >-
       Comma-separated names from the catalogue in bench.py, e.g.
-      "turbo int8 b1,turbo int8 b5,turbo int8 b1 +names".
-  benchmark_piper_gpu:
-    name: Benchmark Piper on the GPU
-    description: Also time Piper text-to-speech on the GPU vs the CPU (first run downloads ~1.3 GB).
+      "turbo int8 b1 +names +vad,turbo int8 b5".
   debug:
     name: Debug logging
     description: Verbose logs from the Whisper server.

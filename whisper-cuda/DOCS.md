@@ -35,11 +35,20 @@ After an HAOS update the kernel changes, and the add-on builds the driver again 
 | `retry_after_crash` | `false` | Allow one more load after an attempt that never finished before a reboot. |
 | `model` | `large-v3-turbo` | Whisper model on the GPU. |
 | `compute_type` | `int8_float32` | `int8_float32` or `float32` on Pascal; `float16` is slow there. |
-| `beam_size` | `5` | 1 = fastest; 5 = usual accuracy setting. |
-| `ha_name_biasing` | `false` | Prompt Whisper with the names exposed to Assist. |
+| `beam_size` | `1` | 1 = fastest; with name biasing it matched beam 5 on this house's commands. |
+| `ha_name_biasing` | `true` | Prompt Whisper with the names exposed to Assist. |
+| `vad_filter` | `true` | Decode speech only; silence/noise returns nothing. |
 | `cpu_fallback_model` | `small` | Model used on the CPU when the GPU is unavailable. |
 | `benchmark` | `false` | Benchmark configurations at start and publish `sensor.whisper_cuda_benchmark`. |
 | `debug` | `false` | Verbose server logs. |
+
+## Thermal guard
+
+Laptop GPUs can't always shed sustained heat. On the GTX 1070 laptop this was built for, a long
+benchmark reached 97 °C, throttled to 139 MHz and finally dropped the GPU off the PCIe bus, which
+hangs the whole host. The add-on therefore checks the GPU every 15 s: at 85 °C (or a hardware
+thermal slowdown) it serves speech-to-text from the CPU until the card is back under 72 °C.
+Normal voice use is short bursts and stays far below that.
 
 ## Status sensor
 

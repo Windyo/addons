@@ -95,57 +95,91 @@ gpu_stage() {
 gpu_stage
 
 # ---- speech-to-text settings ------------------------------------------------------------------
-if [ "$GPU_STATE" = gpu_ready ]; then
-  DEVICE=cuda
-  MODEL=$(opt model)
-  COMPUTE=$(opt compute_type)
-else
-  DEVICE=cpu
-  MODEL=$(opt cpu_fallback_model)
-  COMPUTE=int8
-  log "speech-to-text on CPU ($GPU_STATE)"
-fi
 BEAM=$(opt beam_size)
 BIAS=$(opt ha_name_biasing)
-STT_ATTRS=$(jq -n --arg d "$DEVICE" --arg m "$MODEL" --arg c "$COMPUTE" --arg b "$BEAM" --arg h "$BIAS" \
-  '{stt_device: $d, stt_model: $m, stt_compute_type: $c, stt_beam_size: $b, stt_ha_name_biasing: $h}')
+VADF=$(opt vad_filter)
+GPU_MODEL=$(opt model)
+GPU_COMPUTE=$(opt compute_type)
+CPU_MODEL=$(opt cpu_fallback_model)
+# Thermal guard (laptop GPU): at HOT_C or a hardware thermal slowdown, serve from the CPU until the
+# card is back under COOL_C. Sustained load on this machine reached 97 C, throttled to 139 MHz and
+# eventually dropped the GPU off the PCIe bus, taking the whole host down (2026-10-25).
+HOT_C=85
+COOL_C=72
+HOLD=/tmp/thermal_hold
+PIDF=/tmp/stt.pid
+[ "$GPU_STATE" = gpu_ready ] || log "speech-to-text on CPU ($GPU_STATE)"
 
-# ---- status monitor (background) -----------------------------------------------------------------
+# stt_mode -> "cuda" or "cpu" for the next server start
+stt_mode() {
+  if [ "$GPU_STATE" = gpu_ready ] && [ ! -f "$HOLD" ]; then echo cuda; else echo cpu; fi
+}
+
+stt_attrs() {
+  local d m c
+  d=$(stt_mode)
+  if [ "$d" = cuda ]; then m=$GPU_MODEL; c=$GPU_COMPUTE; else m=$CPU_MODEL; c=int8; fi
+  jq -n --arg d "$d" --arg m "$m" --arg c "$c" --arg b "$BEAM" --arg h "$BIAS" --arg v "$VADF" \
+    --argjson t "$([ -f "$HOLD" ] && echo true || echo false)" \
+    '{stt_device: $d, stt_model: $m, stt_compute_type: $c, stt_beam_size: $b, stt_ha_name_biasing: $h,
+      stt_vad_filter: $v, thermal_hold: $t}'
+}
+
+# ---- status monitor + thermal guard (background) ----------------------------------------------
 monitor() {
-  local q=name,memory.total,memory.used,temperature.gpu,power.draw,pstate,utilization.gpu,clocks.sm,clocks_event_reasons.active row a up b
+  local q=name,memory.total,memory.used,temperature.gpu,power.draw,pstate,utilization.gpu,clocks.sm,clocks_event_reasons.active
+  local row a up b temp reasons hw n=0
   while true; do
-    up=false
-    nc -z -w 2 127.0.0.1 10300 2> /dev/null && up=true
-    b=false
-    [ -f /tmp/bench.running ] && b=true
-    a=$(jq -n --argjson a "$ATTRS" --argjson s "$STT_ATTRS" --argjson u "$up" --argjson b "$b" \
-      '$a + $s + {stt_listening: $u, benchmark_running: $b}')
-    if [ "$GPU_STATE" = gpu_ready ] && row=$(nvidia-smi --query-gpu="$q" --format=csv,noheader,nounits 2>&1); then
-      a=$(jq -n --argjson a "$a" --arg r "$row" '($r | split(", ")) as $f
-        | $a + {gpu_name: $f[0], vram_total_mib: $f[1], vram_used_mib: $f[2], temperature_c: $f[3],
-                power_w: $f[4], pstate: $f[5], utilization_pct: $f[6], sm_clock_mhz: $f[7],
-                throttle_reasons: $f[8]}')
+    row=""
+    if [ "$GPU_STATE" = gpu_ready ]; then
+      row=$(nvidia-smi --query-gpu="$q" --format=csv,noheader,nounits 2>/dev/null || true)
+      temp=$(echo "$row" | awk -F', ' '{print $4}')
+      reasons=$(echo "$row" | awk -F', ' '{print $9}')
+      if [[ "$temp" =~ ^[0-9]+$ ]]; then
+        # 0x40 = HW thermal slowdown
+        hw=0
+        [[ "$reasons" =~ ^0x[0-9a-fA-F]+$ ]] && (( (reasons & 0x40) != 0 )) && hw=1
+        if [ ! -f "$HOLD" ] && { [ "$temp" -ge "$HOT_C" ] || [ "$hw" = 1 ]; }; then
+          log "THERMAL: GPU ${temp} C (reasons $reasons), moving speech-to-text to the CPU"
+          touch "$HOLD"
+          [ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2> /dev/null
+          n=0
+        elif [ -f "$HOLD" ] && [ "$temp" -le "$COOL_C" ]; then
+          log "THERMAL: GPU back to ${temp} C, returning speech-to-text to the GPU"
+          rm -f "$HOLD"
+          [ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2> /dev/null
+          n=0
+        fi
+      fi
     fi
-    publish "$GPU_STATE" "$a"
-    sleep 60
+    if [ $((n % 4)) -eq 0 ]; then   # publish every minute (and right after a switch)
+      up=false
+      nc -z -w 2 127.0.0.1 10300 2> /dev/null && up=true
+      b=false
+      [ -f /tmp/bench.running ] && b=true
+      a=$(jq -n --argjson a "$ATTRS" --argjson s "$(stt_attrs)" --argjson u "$up" --argjson b "$b" \
+        '$a + $s + {stt_listening: $u, benchmark_running: $b}')
+      if [ -n "$row" ]; then
+        a=$(jq -n --argjson a "$a" --arg r "$row" '($r | split(", ")) as $f
+          | $a + {gpu_name: $f[0], vram_total_mib: $f[1], vram_used_mib: $f[2], temperature_c: $f[3],
+                  power_w: $f[4], pstate: $f[5], utilization_pct: $f[6], sm_clock_mhz: $f[7],
+                  throttle_reasons: $f[8]}')
+      fi
+      publish "$GPU_STATE" "$a"
+    fi
+    n=$((n + 1))
+    sleep 15
   done
 }
 monitor &
 
 # ---- optional benchmark -----------------------------------------------------------------------
 if [ "$(opt benchmark)" = true ]; then
-  publish "$GPU_STATE" "$(jq -n --argjson a "$ATTRS" --argjson s "$STT_ATTRS" '$a + $s + {note: "benchmark running"}')"
   touch /tmp/bench.running
   IFS=',' read -r -a BENCH_CONFIGS <<< "$(opt benchmark_configs)"
   /usr/local/bin/bench.py "${BENCH_CONFIGS[@]}" 2>&1 | tee "$LOGS/bench.log"
-  if [ "$GPU_STATE" = gpu_ready ] && [ "$(opt benchmark_piper_gpu)" = true ]; then
-    /usr/local/bin/bench_piper_gpu.sh 2>&1 | tee "$LOGS/bench_piper_gpu.log" || true
-  fi
   if [ -f /data/bench/results.json ]; then
-    pg='{}'
-    [ -f /data/bench/piper_gpu.json ] && pg=$(jq -c . /data/bench/piper_gpu.json)
-    publish_entity sensor.whisper_cuda_benchmark done \
-      "$(jq -c --argjson pg "$pg" '{piper_cpu, piper_gpu: $pg, results}' /data/bench/results.json)"
+    publish_entity sensor.whisper_cuda_benchmark done "$(jq -c '{piper_cpu, results}' /data/bench/results.json)"
   fi
   rm -f /tmp/bench.running
 fi
@@ -159,15 +193,25 @@ fi
   discover_wyoming "tcp://$(hostname):10300"
 ) &
 
-# ---- serve ------------------------------------------------------------------------------------
-args=(--uri tcp://0.0.0.0:10300 --stt-library faster-whisper --model "$MODEL" --device "$DEVICE"
-      --compute-type "$COMPUTE" --beam-size "$BEAM" --language auto
-      --data-dir /data/models --download-dir /data/models)
+# ---- serve (restarted by the thermal guard to switch GPU <-> CPU) ------------------------------
 if [ "$BIAS" = true ] && [ -n "${SUPERVISOR_TOKEN:-}" ]; then
   # Biases recognition toward the names of entities, areas and floors exposed to Assist.
   export WYO_WHISPER_HASS_TOKEN="$SUPERVISOR_TOKEN"
-  args+=(--hass-api http://supervisor/core/api)
 fi
-[ "$(opt debug)" = true ] && args+=(--debug)
-log "starting faster-whisper: ${args[*]}"
-exec /opt/venv/bin/python3 -m wyoming_faster_whisper "${args[@]}"
+trap '[ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2> /dev/null; exit 0' TERM INT
+while true; do
+  dev=$(stt_mode)
+  if [ "$dev" = cuda ]; then model=$GPU_MODEL; compute=$GPU_COMPUTE; else model=$CPU_MODEL; compute=int8; fi
+  args=(--uri tcp://0.0.0.0:10300 --stt-library faster-whisper --model "$model" --device "$dev"
+        --compute-type "$compute" --beam-size "$BEAM" --language auto
+        --data-dir /data/models --download-dir /data/models)
+  [ "$BIAS" = true ] && [ -n "${SUPERVISOR_TOKEN:-}" ] && args+=(--hass-api http://supervisor/core/api)
+  [ "$VADF" = true ] && args+=(--vad-filter)
+  [ "$(opt debug)" = true ] && args+=(--debug)
+  log "starting faster-whisper: ${args[*]}"
+  /opt/venv/bin/python3 -m wyoming_faster_whisper "${args[@]}" &
+  echo $! > "$PIDF"
+  wait "$(cat "$PIDF")"
+  log "faster-whisper exited ($?), restarting"
+  sleep 2
+done

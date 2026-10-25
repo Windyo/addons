@@ -1,6 +1,6 @@
 ---
 name: Whisper CUDA
-version: 0.2.3
+version: 0.2.4
 slug: whisper-cuda
 description: >-
   Whisper speech-to-text on an NVIDIA GPU under HAOS (Pascal / driver 580),
@@ -34,12 +34,12 @@ options:
   load_driver: false
   model: large-v3-turbo
   compute_type: int8_float32
-  beam_size: 5
-  ha_name_biasing: false
+  beam_size: 1
+  ha_name_biasing: true
+  vad_filter: true
   cpu_fallback_model: small
   benchmark: false
-  benchmark_configs: turbo int8 b1,turbo int8 b5,turbo int8 b1 +names
-  benchmark_piper_gpu: false
+  benchmark_configs: turbo int8 b1 +names +vad
   build_jobs: 4
   retry_after_crash: false
   debug: false
@@ -49,10 +49,10 @@ schema:
   compute_type: list(int8_float32|float32|int8|float16|int8_float16)
   beam_size: int(1,10)
   ha_name_biasing: bool
+  vad_filter: bool
   cpu_fallback_model: str
   benchmark: bool
   benchmark_configs: str
-  benchmark_piper_gpu: bool
   build_jobs: int(1,8)
   retry_after_crash: bool
   debug: bool

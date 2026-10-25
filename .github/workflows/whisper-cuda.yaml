@@ -58,9 +58,12 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/data"
           docker run --rm -v "$RUNNER_TEMP/data:/data" whisper-cuda:test \
-            /usr/local/bin/bench.py "CPU base int8 b5" 2>&1 | tee "$RUNNER_TEMP/bench.log"
+            /usr/local/bin/bench.py "CPU base int8 b5" "CPU base int8 b5 +vad" 2>&1 | tee "$RUNNER_TEMP/bench.log"
           r="$RUNNER_TEMP/data/bench/results.json"
           jq -e '.results[0] | (.error | not) and .en_clean.wer_pct < 40 and .fr_clean.wer_pct < 60' "$r"
+          # VAD filter: no speech -> no output, and it must not cost accuracy on real speech.
+          jq -e '.results[1] | (.error | not) and .silence_halluc_words == 0 and .en_clean.wer_pct < 40' "$r"
+          echo "::notice title=CPU smoke +vad::$(jq -c '.results[1] | {latency_mean_s, fr_clean, en_clean, fr_noisy, en_noisy, silence_halluc_words, fallbacks_total}' "$r")"
           echo "::notice title=CPU smoke benchmark::$(jq -c '.results[0] | {latency_mean_s, fr_clean, en_clean, fr_noisy, en_noisy, silence_halluc_words}' "$r")"
           echo "::notice title=Piper CPU synthesis::$(jq -c .piper_cpu "$r")"
 

@@ -208,6 +208,35 @@ def gpu_telemetry() -> str | None:
         return repr(exc)
 
 
+def gpu_temp() -> int | None:
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+        return int(out.splitlines()[0])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def cool_down(limit: int, target: int, why: str) -> float:
+    """Wait while the GPU is at/above `limit` until it is at/below `target`. Returns seconds waited.
+
+    This laptop cannot shed sustained GPU heat: at ~93 C it throttles to 139 MHz and an earlier run
+    ended with the GPU falling off the bus. Gating keeps it cool and the latencies honest."""
+    t = gpu_temp()
+    if t is None or t < limit:
+        return 0.0
+    log(f"  cooling ({why}): GPU {t} C, waiting for <= {target} C")
+    start = time.perf_counter()
+    while True:
+        time.sleep(5)
+        t = gpu_temp()
+        if t is None or t <= target:
+            break
+        if time.perf_counter() - start > 1800:
+            raise RuntimeError(f"GPU still {t} C after 30 min of cooling")
+    return time.perf_counter() - start
+
+
 def ha_prompt(model) -> str | None:
     """The same biasing prompt the server builds from Home Assistant's exposed names."""
     token = os.environ.get("SUPERVISOR_TOKEN")
@@ -241,7 +270,7 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
         before = FALLBACKS.count
         t = time.perf_counter()
         segs, _ = model.transcribe(clip["path"], language=clip["lang"], beam_size=cfg["beam"],
-                                   initial_prompt=prompt, vad_filter=False)
+                                   initial_prompt=prompt, vad_filter=bool(cfg.get("vad")))
         text = " ".join(s.text for s in segs).strip()
         return text, time.perf_counter() - t, FALLBACKS.count - before
 
@@ -249,11 +278,14 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
         transcribe(c)
 
     gpu = cfg["device"] == "cuda"
+    cooled = cool_down(71, 65, "before config") if gpu else 0.0
     telemetry = {"start": gpu_telemetry() if gpu else None}
     log(f"  gpu: {telemetry['start']}")
     rows = []
     t_run = time.perf_counter()
     for idx, c in enumerate(clips, 1):
+        if gpu:
+            cooled += cool_down(80, 70, "between clips")
         text, dt, fb = transcribe(c)
         if idx % 20 == 0:
             log(f"  {idx}/{len(clips)} clips, {time.perf_counter() - t_run:.0f}s"
@@ -276,6 +308,7 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
     res = {
         "name": cfg["name"], "model": cfg["model"], "device": cfg["device"],
         "compute_type": cfg["compute_type"], "beam": cfg["beam"], "prompt": bool(prompt),
+        "vad": bool(cfg.get("vad")),
         "load_s": round(load_s, 1), "vram_mib": vram,
         "latency_mean_s": round(statistics.mean(lat), 3),
         "latency_p50_s": round(lat[len(lat) // 2], 3),
@@ -289,6 +322,7 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
         "fallbacks_total": sum(r["fallbacks"] for r in rows),
         "clips_with_fallback": sum(1 for r in rows if r["fallbacks"]),
         "run_s": round(time.perf_counter() - t_run, 1),
+        "cooling_wait_s": round(cooled, 1),
         "gpu": dict(telemetry, end=gpu_telemetry() if gpu else None),
         "slowest": [{"text": r["text"], "kind": r["kind"], "voice": r["voice"],
                      "latency_s": round(r["latency_s"], 2), "fallbacks": r["fallbacks"], "hyp": r["hyp"][:120]}
@@ -310,6 +344,8 @@ GPU_CONFIGS = [
     {"name": "turbo int8 b5", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 5},
     {"name": "turbo int8 b1 +names", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 1, "prompt": True},
     {"name": "turbo int8 b3 +names", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 3, "prompt": True},
+    {"name": "turbo int8 b1 +names +vad", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 1, "prompt": True, "vad": True},
+    {"name": "turbo int8 b1 +vad", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 1, "vad": True},
     {"name": "turbo fp32 b1", "model": "large-v3-turbo", "compute_type": "float32", "beam": 1},
     {"name": "large-v3 int8 b1", "model": "large-v3", "compute_type": "int8_float32", "beam": 1},
     {"name": "medium int8 b1", "model": "medium", "compute_type": "int8_float32", "beam": 1},
@@ -317,6 +353,7 @@ GPU_CONFIGS = [
 CPU_CONFIGS = [
     {"name": "CPU small int8 b5", "model": "small", "compute_type": "int8", "beam": 5, "threads": 4},
     {"name": "CPU base int8 b5", "model": "base", "compute_type": "int8", "beam": 5, "threads": 4},
+    {"name": "CPU base int8 b5 +vad", "model": "base", "compute_type": "int8", "beam": 5, "threads": 4, "vad": True},
 ]
 
 
