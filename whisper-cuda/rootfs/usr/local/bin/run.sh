@@ -110,11 +110,35 @@ BIAS=$(opt ha_name_biasing)
 STT_ATTRS=$(jq -n --arg d "$DEVICE" --arg m "$MODEL" --arg c "$COMPUTE" --arg b "$BEAM" --arg h "$BIAS" \
   '{stt_device: $d, stt_model: $m, stt_compute_type: $c, stt_beam_size: $b, stt_ha_name_biasing: $h}')
 
+# ---- status monitor (background) -----------------------------------------------------------------
+monitor() {
+  local q=name,memory.total,memory.used,temperature.gpu,power.draw,pstate,utilization.gpu,clocks.sm,clocks_event_reasons.active row a up b
+  while true; do
+    up=false
+    nc -z -w 2 127.0.0.1 10300 2> /dev/null && up=true
+    b=false
+    [ -f /tmp/bench.running ] && b=true
+    a=$(jq -n --argjson a "$ATTRS" --argjson s "$STT_ATTRS" --argjson u "$up" --argjson b "$b" \
+      '$a + $s + {stt_listening: $u, benchmark_running: $b}')
+    if [ "$GPU_STATE" = gpu_ready ] && row=$(nvidia-smi --query-gpu="$q" --format=csv,noheader,nounits 2>&1); then
+      a=$(jq -n --argjson a "$a" --arg r "$row" '($r | split(", ")) as $f
+        | $a + {gpu_name: $f[0], vram_total_mib: $f[1], vram_used_mib: $f[2], temperature_c: $f[3],
+                power_w: $f[4], pstate: $f[5], utilization_pct: $f[6], sm_clock_mhz: $f[7],
+                throttle_reasons: $f[8]}')
+    fi
+    publish "$GPU_STATE" "$a"
+    sleep 60
+  done
+}
+monitor &
+
 # ---- optional benchmark -----------------------------------------------------------------------
 if [ "$(opt benchmark)" = true ]; then
   publish "$GPU_STATE" "$(jq -n --argjson a "$ATTRS" --argjson s "$STT_ATTRS" '$a + $s + {note: "benchmark running"}')"
-  /usr/local/bin/bench.py 2>&1 | tee "$LOGS/bench.log"
-  if [ "$GPU_STATE" = gpu_ready ]; then
+  touch /tmp/bench.running
+  IFS=',' read -r -a BENCH_CONFIGS <<< "$(opt benchmark_configs)"
+  /usr/local/bin/bench.py "${BENCH_CONFIGS[@]}" 2>&1 | tee "$LOGS/bench.log"
+  if [ "$GPU_STATE" = gpu_ready ] && [ "$(opt benchmark_piper_gpu)" = true ]; then
     /usr/local/bin/bench_piper_gpu.sh 2>&1 | tee "$LOGS/bench_piper_gpu.log" || true
   fi
   if [ -f /data/bench/results.json ]; then
@@ -123,25 +147,8 @@ if [ "$(opt benchmark)" = true ]; then
     publish_entity sensor.whisper_cuda_benchmark done \
       "$(jq -c --argjson pg "$pg" '{piper_cpu, piper_gpu: $pg, results}' /data/bench/results.json)"
   fi
+  rm -f /tmp/bench.running
 fi
-
-# ---- status monitor (background) -----------------------------------------------------------------
-monitor() {
-  local q=name,memory.total,memory.used,temperature.gpu,power.draw,pstate,utilization.gpu,clocks.sm row a up
-  while true; do
-    up=false
-    nc -z -w 2 127.0.0.1 10300 2> /dev/null && up=true
-    a=$(jq -n --argjson a "$ATTRS" --argjson s "$STT_ATTRS" --argjson u "$up" '$a + $s + {stt_listening: $u}')
-    if [ "$GPU_STATE" = gpu_ready ] && row=$(nvidia-smi --query-gpu="$q" --format=csv,noheader,nounits 2>&1); then
-      a=$(jq -n --argjson a "$a" --arg r "$row" '($r | split(", ")) as $f
-        | $a + {gpu_name: $f[0], vram_total_mib: $f[1], vram_used_mib: $f[2], temperature_c: $f[3],
-                power_w: $f[4], pstate: $f[5], utilization_pct: $f[6], sm_clock_mhz: $f[7]}')
-    fi
-    publish "$GPU_STATE" "$a"
-    sleep 60
-  done
-}
-monitor &
 
 # ---- Home Assistant discovery (once the server answers) ----------------------------------------
 (

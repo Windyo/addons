@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import json
+import logging
 import os
 import re
 import statistics
@@ -177,6 +178,36 @@ def vram_used_mib() -> int | None:
         return None
 
 
+class FallbackCounter(logging.Handler):
+    """Counts faster-whisper's temperature fallbacks (each one is a full re-decode)."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.count = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if "threshold is not met" in record.getMessage():
+            self.count += 1
+
+
+FALLBACKS = FallbackCounter()
+_fw_log = logging.getLogger("faster_whisper")
+_fw_log.setLevel(logging.DEBUG)
+_fw_log.propagate = False
+_fw_log.addHandler(FALLBACKS)
+
+
+def gpu_telemetry() -> str | None:
+    """SM clock vs max, temperature, power, P-state and active throttle reasons."""
+    q = "clocks.sm,clocks.max.sm,temperature.gpu,power.draw,pstate,clocks_event_reasons.active"
+    try:
+        r = subprocess.run(["nvidia-smi", f"--query-gpu={q}", "--format=csv,noheader"],
+                           capture_output=True, text=True, timeout=10)
+        return (r.stdout or r.stderr).strip()
+    except Exception as exc:  # noqa: BLE001
+        return repr(exc)
+
+
 def ha_prompt(model) -> str | None:
     """The same biasing prompt the server builds from Home Assistant's exposed names."""
     token = os.environ.get("SUPERVISOR_TOKEN")
@@ -206,22 +237,32 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
     if cfg.get("prompt"):
         log(f"prompt ({len(prompt or '')} chars): {(prompt or '')[:300]}")
 
-    def transcribe(clip: dict) -> tuple[str, float]:
+    def transcribe(clip: dict) -> tuple[str, float, int]:
+        before = FALLBACKS.count
         t = time.perf_counter()
         segs, _ = model.transcribe(clip["path"], language=clip["lang"], beam_size=cfg["beam"],
                                    initial_prompt=prompt, vad_filter=False)
         text = " ".join(s.text for s in segs).strip()
-        return text, time.perf_counter() - t
+        return text, time.perf_counter() - t, FALLBACKS.count - before
 
     for c in clips[:2]:  # warm-up (CUDA context, kernels)
         transcribe(c)
 
+    gpu = cfg["device"] == "cuda"
+    telemetry = {"start": gpu_telemetry() if gpu else None}
+    log(f"  gpu: {telemetry['start']}")
     rows = []
-    for c in clips:
-        text, dt = transcribe(c)
+    t_run = time.perf_counter()
+    for idx, c in enumerate(clips, 1):
+        text, dt, fb = transcribe(c)
+        if idx % 20 == 0:
+            log(f"  {idx}/{len(clips)} clips, {time.perf_counter() - t_run:.0f}s"
+                + (f", gpu: {gpu_telemetry()}" if gpu else ""))
+        if idx == len(clips) // 2 and gpu:
+            telemetry["mid"] = gpu_telemetry()
         ref = normalize(c["text"], c["lang"])
         hyp = normalize(text, c["lang"])
-        rows.append({**c, "hyp": text, "latency_s": dt,
+        rows.append({**c, "hyp": text, "latency_s": dt, "fallbacks": fb,
                      "wer": wer(ref, hyp) if c["kind"] != "silence" else None,
                      "exact": (ref == hyp) if c["kind"] != "silence" else None,
                      "halluc_words": len(hyp) if c["kind"] == "silence" else 0})
@@ -245,6 +286,13 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
         "en_clean": agg(lambda r: r["lang"] == "en" and r["kind"] == "clean"),
         "en_noisy": agg(lambda r: r["lang"] == "en" and r["kind"] == "noisy"),
         "silence_halluc_words": sum(r["halluc_words"] for r in rows if r["kind"] == "silence"),
+        "fallbacks_total": sum(r["fallbacks"] for r in rows),
+        "clips_with_fallback": sum(1 for r in rows if r["fallbacks"]),
+        "run_s": round(time.perf_counter() - t_run, 1),
+        "gpu": dict(telemetry, end=gpu_telemetry() if gpu else None),
+        "slowest": [{"text": r["text"], "kind": r["kind"], "voice": r["voice"],
+                     "latency_s": round(r["latency_s"], 2), "fallbacks": r["fallbacks"], "hyp": r["hyp"][:120]}
+                    for r in sorted(rows, key=lambda r: -r["latency_s"])[:3]],
     }
     log(json.dumps(res, ensure_ascii=False))
     for r in rows:
@@ -255,16 +303,16 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
     return res
 
 
+# Catalogue. Run a subset by name (option benchmark_configs); nothing runs by default.
 GPU_CONFIGS = [
     {"name": "turbo int8 b1", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 1},
+    {"name": "turbo int8 b3", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 3},
     {"name": "turbo int8 b5", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 5},
+    {"name": "turbo int8 b1 +names", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 1, "prompt": True},
+    {"name": "turbo int8 b3 +names", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 3, "prompt": True},
     {"name": "turbo fp32 b1", "model": "large-v3-turbo", "compute_type": "float32", "beam": 1},
-    {"name": "turbo fp32 b5", "model": "large-v3-turbo", "compute_type": "float32", "beam": 5},
-    {"name": "turbo fp16 b1", "model": "large-v3-turbo", "compute_type": "float16", "beam": 1},
-    {"name": "turbo int8 b5 +names", "model": "large-v3-turbo", "compute_type": "int8_float32", "beam": 5, "prompt": True},
-    {"name": "large-v3 int8 b5", "model": "large-v3", "compute_type": "int8_float32", "beam": 5},
-    {"name": "medium int8 b5", "model": "medium", "compute_type": "int8_float32", "beam": 5},
-    {"name": "small fp32 b5", "model": "small", "compute_type": "float32", "beam": 5},
+    {"name": "large-v3 int8 b1", "model": "large-v3", "compute_type": "int8_float32", "beam": 1},
+    {"name": "medium int8 b1", "model": "medium", "compute_type": "int8_float32", "beam": 1},
 ]
 CPU_CONFIGS = [
     {"name": "CPU small int8 b5", "model": "small", "compute_type": "int8", "beam": 5, "threads": 4},
@@ -275,19 +323,25 @@ CPU_CONFIGS = [
 def main() -> int:
     import ctranslate2
 
-    only = set(sys.argv[1:])
+    only = [a.strip() for a in sys.argv[1:] if a.strip()]
     log(f"ctranslate2 {ctranslate2.__version__}, CUDA devices: {ctranslate2.get_cuda_device_count()}")
     gpu = ctranslate2.get_cuda_device_count() > 0
     if gpu:
         log(f"CUDA compute types: {sorted(ctranslate2.get_supported_compute_types('cuda'))}")
+    prev = BENCH / "results.json"
+    if prev.exists():  # keep earlier runs
+        prev.rename(BENCH / time.strftime("results-%Y%m%d-%H%M%S.json", time.localtime(prev.stat().st_mtime)))
     ensure_voices()
     clips, tts = make_clips()
     log(f"{len(clips)} clips; Piper CPU synthesis per phrase: {json.dumps(tts)}")
 
     configs = [dict(c, device="cuda") for c in GPU_CONFIGS] if gpu else []
     configs += [dict(c, device="cpu") for c in CPU_CONFIGS]
-    if only:
-        configs = [c for c in configs if c["name"] in only]
+    by_name = {c["name"]: c for c in configs}
+    unknown = [n for n in only if n not in by_name]
+    if unknown:
+        log(f"unknown config(s) {unknown}; known: {list(by_name)}")
+    configs = [by_name[n] for n in only if n in by_name]
 
     results = []
     for cfg in configs:

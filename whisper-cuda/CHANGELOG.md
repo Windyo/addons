@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3
+
+- Benchmark runs a chosen short list (`benchmark_configs`, default 3 candidates) instead of everything.
+- Logs progress every 20 clips with GPU clock/max clock, temperature, power and throttle reasons;
+  counts faster-whisper temperature fallbacks (full re-decodes) per config; lists the slowest clips.
+- Status sensor updates live during a benchmark (`benchmark_running`, `throttle_reasons`).
+- Piper GPU experiment behind its own switch (`benchmark_piper_gpu`). Earlier results are archived.
+
 ## 0.2.2
 
 - Benchmark also measures Piper on the GPU vs the CPU (`bench_piper_gpu.sh`): onnxruntime-gpu 1.26.0
