@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- Pin PyAV 18.1.0: PyAV 19 removed `open(metadata_errors=)`, which faster-whisper 1.2.1 passes
+  (caught by the CI benchmark smoke test before release).
+
 ## 0.2.0
 
 - Phase 2: Wyoming faster-whisper 3.8.1 server on port 10300, announced to Home Assistant.

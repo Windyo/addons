@@ -1,12 +1,13 @@
 # Full dependency lock for the Whisper server + benchmark (Python 3.12, manylinux x86_64).
 # Resolved 2026-10-25 with pip --dry-run --report. Top level: wyoming-faster-whisper[hass] 3.8.1,
 # faster-whisper 1.2.1, ctranslate2 4.8.3 (built without cuDNN), nvidia-cublas-cu12 12.9 (has sm_61), piper-tts 1.8.0.
+# av pinned to 18.1.0: PyAV 19 removed open(metadata_errors=), which faster-whisper 1.2.1 still passes.
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.5
 aiosignal==1.4.0
 anyio==4.15.1
 attrs==26.1.0
-av==19.0.2
+av==18.1.0
 click==8.5.0
 ctranslate2==4.8.3
 faster-whisper==1.2.1
