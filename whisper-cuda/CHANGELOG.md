@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.7
+
+- Benchmark cooling gate loosened: pause at 87 C until 80 C (was 80 -> 70), start each config at
+  <= 75 C. Measured on this card: full clocks (1780-1820 MHz, no throttle flags) at 80-81 C;
+  throttling only at 93-97 C. The old gate spent ~1000 s of every config waiting.
+- Thermal guard returns to the GPU at 78 C (was 72); still leaves the GPU at 85 C or on a
+  hardware slowdown.
+
 ## 0.2.6
 
 - Fix: a language-restricted config (the French fine-tune) crashed the benchmark when scoring the

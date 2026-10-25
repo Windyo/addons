@@ -105,7 +105,7 @@ CPU_MODEL=$(opt cpu_fallback_model)
 # card is back under COOL_C. Sustained load on this machine reached 97 C, throttled to 139 MHz and
 # eventually dropped the GPU off the PCIe bus, taking the whole host down (2026-10-25).
 HOT_C=85
-COOL_C=72
+COOL_C=78
 HOLD=/tmp/thermal_hold
 PIDF=/tmp/stt.pid
 [ "$GPU_STATE" = gpu_ready ] || log "speech-to-text on CPU ($GPU_STATE)"

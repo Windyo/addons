@@ -293,14 +293,14 @@ def run_config(cfg: dict, clips: list[dict]) -> dict:
         transcribe(c)
 
     gpu = cfg["device"] == "cuda"
-    cooled = cool_down(71, 65, "before config") if gpu else 0.0
+    cooled = cool_down(78, 75, "before config") if gpu else 0.0
     telemetry = {"start": gpu_telemetry() if gpu else None}
     log(f"  gpu: {telemetry['start']}")
     rows = []
     t_run = time.perf_counter()
     for idx, c in enumerate(clips, 1):
         if gpu:
-            cooled += cool_down(80, 70, "between clips")
+            cooled += cool_down(87, 80, "between clips")
         text, dt, fb = transcribe(c)
         if idx % 20 == 0:
             log(f"  {idx}/{len(clips)} clips, {time.perf_counter() - t_run:.0f}s"
