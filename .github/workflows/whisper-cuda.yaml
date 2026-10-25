@@ -16,11 +16,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-test-push:
+  build-push-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Read add-on version
         id: meta
@@ -43,9 +45,29 @@ jobs:
           docker run --rm whisper-cuda:test bash -c \
             'for f in /usr/local/bin/*.sh; do bash -n "$f" || exit 1; done; nvidia-smi --version | head -1 || true; ldconfig -p | grep -E "libcuda|libnvidia-ml"'
 
+      - name: Push to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag whisper-cuda:test "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
+          docker push "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
+
+      # The compile test is slow (~12 min) and only matters when the build path changes; the
+      # device gates it anyway (a failed build never loads). It reports, it doesn't block the push.
+      - name: Does the driver build path change?
+        id: ch
+        run: |
+          before="${{ github.event.before }}"
+          if [ "${{ github.event_name }}" != push ] || [ -z "$before" ] || [ "$before" = 0000000000000000000000000000000000000000 ]; then
+            echo "compile=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git diff --name-only "$before" "${{ github.sha }}" | tee /dev/stderr \
+            | grep -qE '^whisper-cuda/(Dockerfile|tests/|rootfs/usr/local/bin/nv-build-modules\.sh|rootfs/usr/local/share/)|^\.github/workflows/' \
+            && echo "compile=true" >> "$GITHUB_OUTPUT" || echo "compile=false" >> "$GITHUB_OUTPUT"
+
       # The same script the add-on runs on the device, against the config read out of the
       # official HAOS 18.3 kernel (IKCONFIG). Proves the driver builds for that exact kernel.
       - name: Compile driver for HAOS 18.3 (6.18.52-haos)
+        if: steps.ch.outputs.compile == 'true'
         # Explicit bash = -eo pipefail, so a failing build is not masked by tee.
         shell: bash
         run: |
@@ -57,6 +79,7 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/out/build.log"
 
       - name: Check result
+        if: steps.ch.outputs.compile == 'true'
         run: |
           d="$RUNNER_TEMP/out/6.18.52-haos"
           ls -la "$d"
@@ -78,14 +101,8 @@ jobs:
           done
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.ch.outputs.compile == 'true'
         with:
           name: driver-6.18.52-haos
           path: ${{ runner.temp }}/out
           if-no-files-found: ignore
-
-      - name: Push to GHCR
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker tag whisper-cuda:test "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
-          docker push "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
