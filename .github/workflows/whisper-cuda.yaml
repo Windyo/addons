@@ -46,12 +46,15 @@ jobs:
       # The same script the add-on runs on the device, against the config read out of the
       # official HAOS 18.3 kernel (IKCONFIG). Proves the driver builds for that exact kernel.
       - name: Compile driver for HAOS 18.3 (6.18.52-haos)
+        # Explicit bash = -eo pipefail, so a failing build is not masked by tee.
+        shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/out"
           docker run --rm \
             -v "$PWD/whisper-cuda/tests:/tests:ro" -v "$RUNNER_TEMP/out:/out" \
             whisper-cuda:test \
-            nv-build-modules.sh 6.18.52-haos /tests/haos-18.3-kernel.config /out/6.18.52-haos "$(nproc)"
+            nv-build-modules.sh 6.18.52-haos /tests/haos-18.3-kernel.config /out/6.18.52-haos "$(nproc)" \
+            2>&1 | tee "$RUNNER_TEMP/out/build.log"
 
       - name: Check result
         run: |
@@ -61,6 +64,18 @@ jobs:
           echo "config drift:"; cat "$d/config-drift.txt"
           test "$(cat "$d/vermagic")" = "6.18.52-haos SMP preempt mod_unload "
           docker run --rm -v "$d:/m:ro" whisper-cuda:test modinfo /m/nvidia.ko /m/nvidia-uvm.ko
+
+      # Logs need a GitHub login; annotations are public, so surface the key facts there.
+      - name: Report failure details
+        if: failure()
+        run: |
+          d="$RUNNER_TEMP/out/6.18.52-haos"
+          tail -n 80 "$RUNNER_TEMP/out/build.log" > "$RUNNER_TEMP/out/build-tail.txt" 2>/dev/null || true
+          for f in "$d/config-drift-detail.txt" "$RUNNER_TEMP/out/build-tail.txt"; do
+            [ -s "$f" ] || continue
+            body=$(head -c 30000 "$f" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            echo "::error title=$(basename "$f")::$body"
+          done
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -55,10 +55,10 @@ unexpected=$(grep -vxF -f "$ALLOW" "$OUT/config-drift.txt" || true)
 if [ -n "$unexpected" ]; then
   echo "ERROR: kernel config changed beyond the allowlist:"
   for o in $unexpected; do
-    printf '  %-40s kernel: %-12s rebuilt: %s\n' "$o" \
+    printf '%s kernel=%s rebuilt=%s\n' "$o" \
       "$(grep -E "^${o}=" "$WORK/config.orig" | cut -d= -f2- || echo unset)" \
       "$(grep -E "^${o}=" "$K/.config" | cut -d= -f2- || echo unset)"
-  done
+  done | tee "$OUT/config-drift-detail.txt"
   exit 3
 fi
 
