@@ -1,7 +1,8 @@
 """One dry-run through the CESU declaration form with Playwright.
 
-v0.1 is an explorer: it clicks only the navigation controls needed to reach the form
-(login, code check, declare, continue), fills hours and rate, captures, and stops.
+v0.2 is an explorer: it clicks only the navigation controls needed to reach the form and the
+recap step (login, code check, declare, continue, next step), selects the period, fills hours and
+rate, checks the computed total, captures the recap page, and stops. Nothing is ever sent.
 """
 from __future__ import annotations
 
@@ -17,12 +18,11 @@ from playwright.async_api import Page, async_playwright
 
 from config import Options
 from logic import (
-    find_employee_text,
-    find_period_text,
+    expected_total,
     format_rate_fr,
-    nearest_minute_option,
+    parse_fr_number,
+    period_label,
     redact,
-    split_hours,
     utc_now,
 )
 
@@ -69,6 +69,78 @@ FORM_MAP_JS = r"""
         o.options = Array.from(el.options).map(op => ({value: op.value, label: clean(op.text), selected: op.selected}));
       return o;
     });
+}
+"""
+
+# Tags the control that belongs to a visible label text (data-cesu-field) so Playwright can use it.
+# Resolution: <label for>/wrapping label, aria-label, else the first matching control after the text.
+TAG_FIELD_JS = r"""
+([name, label, selector]) => {
+  const norm = t => (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u2019\u2018]/g, "'").replace(/[*:]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  const want = norm(label);
+  const visible = el => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  document.querySelectorAll('[data-cesu-field="' + name + '"]').forEach(e => e.removeAttribute('data-cesu-field'));
+  const matches = el => el.matches(selector);
+  let found = null;
+  const done = el => { if (el && visible(el)) { el.setAttribute('data-cesu-field', name); found = el; } return !!found; };
+  for (const l of document.querySelectorAll('label')) {
+    if (!norm(l.innerText).startsWith(want)) continue;
+    if (l.control && matches(l.control) && done(l.control)) return true;
+    const inner = Array.from(l.querySelectorAll(selector)).find(visible);
+    if (done(inner)) return true;
+  }
+  for (const el of document.querySelectorAll(selector)) {
+    if (norm(el.getAttribute('aria-label')).startsWith(want) && done(el)) return true;
+  }
+  const texts = Array.from(document.querySelectorAll('label, legend, span, div, p, th, td, dt, strong, b'))
+    .filter(e => e.children.length === 0 && norm(e.innerText) === want);
+  const all = Array.from(document.querySelectorAll(selector)).filter(visible);
+  for (const t of texts) {
+    const after = all.find(e => (t.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING) && !t.contains(e));
+    if (done(after)) return true;
+  }
+  return false;
+}
+"""
+
+# Reads the tagged control: selected option text for a select, else its value / text.
+READ_FIELD_JS = r"""
+el => {
+  const clean = t => (t || '').replace(/\s+/g, ' ').trim();
+  if (el.tagName === 'SELECT') {
+    const o = el.options[el.selectedIndex];
+    return {text: o ? clean(o.text) : '', value: el.value};
+  }
+  const v = ('value' in el) ? el.value : el.innerText;
+  return {text: clean(v), value: clean(v)};
+}
+"""
+
+# Recap page: stepper, visible buttons/links of the main area, collapsed main text.
+RECAP_JS = r"""
+() => {
+  const clean = t => (t || '').replace(/\s+/g, ' ').trim();
+  const visible = el => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  const main = document.querySelector('main, [role="main"], #main, #contenu, #content') || document.body;
+  const inChrome = el => !!el.closest('header, footer, nav, [role="banner"], [role="contentinfo"], [role="navigation"]');
+  const step = document.querySelector('[class*="stepper" i], [class*="steps" i], [role="progressbar"]');
+  const active = Array.from(document.querySelectorAll(
+    '[aria-current], [class*="step" i][class*="active" i], [class*="step" i][class*="current" i]'))
+    .filter(visible).map(e => clean(e.innerText)).filter(Boolean);
+  const labels = [];
+  const isBtnInput = el => el.tagName === 'INPUT' && (['button', 'image'].includes(el.type) || el.type.startsWith('sub'));
+  main.querySelectorAll('button, a, input, [role="button"]').forEach(el => {
+    if (!visible(el) || inChrome(el) || (el.tagName === 'INPUT' && !isBtnInput(el))) return;
+    const t = clean(el.tagName === 'INPUT' ? el.value : (el.innerText || el.getAttribute('aria-label')));
+    if (t && !labels.includes(t)) labels.push(t);
+  });
+  return {
+    stepper: step ? clean(step.innerText) : '',
+    active: Array.from(new Set(active)).join(' | '),
+    buttons: labels,
+    text: clean(main.innerText).slice(0, 2000),
+  };
 }
 """
 
@@ -124,6 +196,18 @@ def _timing(label: str, t0: float) -> None:
     log.info("step %s done in %.1f s", label, time.monotonic() - t0)
 
 
+async def _field(page: Page, name: str, label: str, selector: str = "select"):
+    """Locator of the control tied to `label`, or raise StepError(label)."""
+    ok = await page.evaluate(TAG_FIELD_JS, [name, label, selector])
+    if not ok:
+        raise StepError(f"field '{label}' not found on the form")
+    return page.locator(f'[data-cesu-field="{name}"]')
+
+
+async def _read(page: Page, name: str, label: str, selector: str = "select") -> dict:
+    return await (await _field(page, name, label, selector)).evaluate(READ_FIELD_JS)
+
+
 async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
     """Execute the explorer.
 
@@ -131,7 +215,8 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
     (step, period_seen, ...) so the caller can report the last known step even if cancelled."""
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     cap = Capture(CAPTURE_ROOT / run_ts)
-    state.update(step="start", period_seen="", employee_seen="", capture=cap)
+    state.update(step="start", period_seen="", employee_seen="", activity_seen="", total_seen=None,
+                 recap_step="", recap_buttons=[], recap_text="", capture=cap)
     secrets = opt.secrets
     log.info("run %s: month=%s hours=%s rate=%s (dry run)", req["request_id"], req["month"], req["hours"], req["rate"])
 
@@ -222,59 +307,110 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
             cap.write_json("form_map_declare.json", await page.evaluate(FORM_MAP_JS))
 
             state["step"] = "continue"
-            await page.get_by_role("button", name="Continuer").first.click()
-            await _settle(page)
+            modal_btn = page.get_by_role("button", name="Continuer")
+            form_ready = page.locator("#nbHeure")
+            if await _first_visible(page, {"modal": modal_btn, "form": form_ready}, 15) == "modal":
+                await modal_btn.first.click()  # informational modal; optional
+                await _settle(page)
+            else:
+                log.info("no 'Continuer' modal; the form is already shown")
             state["step"] = "form"
-            await page.locator("#nbHeure").wait_for(state="visible")
+            await form_ready.wait_for(state="visible")
             await cap.shot(page, "form")
             _timing("open form", t0)
 
-            body = await page.locator("body").inner_text()
-            state["period_seen"] = find_period_text(body)
-            state["employee_seen"] = find_employee_text(body)
-            log.info("period seen: %s", state["period_seen"] or "(none)")
-            log.info("employee seen: %s", state["employee_seen"] or "(none)")
+            # ---- employee, period, activity ----
+            state["step"] = "employee"
+            emp = await _read(page, "employee", "Salarié")
+            state["employee_seen"] = emp["text"]
+            log.info("employee seen: %s", emp["text"] or "(none)")
+            if opt.employee_name.lower() not in emp["text"].lower():
+                raise StepError(f"selected employee '{emp['text']}' does not contain '{opt.employee_name}'")
+
+            state["step"] = "period"
+            label = period_label(req["month"])
+            period_sel = await _field(page, "period", "Période d'emploi")
+            options = await period_sel.evaluate(
+                "el => Array.from(el.options).map(o => [o.value, (o.text || '').replace(/\\s+/g, ' ').trim()])")
+            match = [v for v, t in options if t.lower() == label.lower()]
+            state["period_seen"] = (await _read(page, "period", "Période d'emploi"))["text"]
+            if not match:
+                raise StepError(f"period '{label}' not offered (options: {[t for _, t in options][:12]})")
+            if state["period_seen"].lower() != label.lower():
+                await period_sel.select_option(match[0])
+                await _settle(page)
+                await page.wait_for_timeout(1500)  # the site may redraw parts of the form
+            state["period_seen"] = (await _read(page, "period", "Période d'emploi"))["text"]
+            log.info("period selected: %s", state["period_seen"])
+            if state["period_seen"].lower() != label.lower():
+                raise StepError(f"period shows '{state['period_seen']}' after selecting '{label}'")
+
+            activity = await _read(page, "activity", "Nature d'activité principale")
+            state["activity_seen"] = activity["text"]
+            log.info("activity: %s", activity["text"])
             cap.write_json("form_map.json", {
                 "url": page.url,
                 "title": await page.title(),
                 "requested_month": req["month"],
                 "period_seen": state["period_seen"],
                 "employee_seen": state["employee_seen"],
+                "activity_seen": state["activity_seen"],
                 "elements": await page.evaluate(FORM_MAP_JS),
             })
 
             # ---- fill (never sent) ----
             state["step"] = "fill"
             t0 = time.monotonic()
-            whole, minutes = split_hours(req["hours"])
+            hours = req["hours"]
             hours_sel = page.locator("#nbHeure")
             hour_values = await hours_sel.evaluate("el => Array.from(el.options).map(o => o.value)")
-            if str(whole) not in hour_values:
-                raise StepError(f"no option '{whole}' in #nbHeure (options: {hour_values[:30]})")
-            await hours_sel.select_option(str(whole))
-            log.info("hours set to %d", whole)
-
-            minute_sel = page.locator('select[id*="minute" i], select[name*="minute" i]')
-            if await minute_sel.count() > 0:
-                opts = await minute_sel.first.evaluate(
-                    "el => Array.from(el.options).map(o => [o.value, (o.text || '').trim()])")
-                chosen = nearest_minute_option([(v, t) for v, t in opts], minutes)
-                if chosen is None:
-                    log.warning("minutes select has no numeric option; left untouched")
-                else:
-                    await minute_sel.first.select_option(chosen)
-                    log.info("minutes wanted %.2f, chose option %r of %s", minutes, chosen, [o[0] for o in opts])
-            elif minutes:
-                log.warning("hours has %.2f remaining minutes but no minutes select was found", minutes)
-            else:
-                log.info("no minutes select found (none needed)")
+            if str(hours) not in hour_values:
+                raise StepError(f"no option '{hours}' in #nbHeure (options: {hour_values[:30]})")
+            await hours_sel.select_option(str(hours))
+            log.info("hours set to %d", hours)
 
             rate_txt = format_rate_fr(req["rate"])
             await page.get_by_role("textbox", name="Salaire horaire net").fill(rate_txt)
             log.info("rate set to %s", rate_txt)
+
+            # ---- total check: the site computes it; it must equal hours * rate ----
+            state["step"] = "total"
+            want = expected_total(hours, req["rate"])
+            deadline = time.monotonic() + 5
+            total = None
+            while True:
+                try:
+                    total_txt = (await _read(page, "total", "Total net déclaré", "input, output, textarea"))["text"]
+                except StepError:  # shown as plain text rather than a field
+                    body = " ".join((await page.locator("body").inner_text()).split())
+                    m = re.search(r"Total net déclaré\s*:?\s*([\d\s.,]+\d)", body)
+                    total_txt = m.group(1) if m else ""
+                total = parse_fr_number(total_txt)
+                if (total is not None and abs(total - want) <= 0.01) or time.monotonic() > deadline:
+                    break
+                await page.wait_for_timeout(500)
+            state["total_seen"] = total
             await cap.shot(page, "form-filled")
             cap.write_json("form_map_filled.json", {"elements": await page.evaluate(FORM_MAP_JS)})
+            if total is None or abs(total - want) > 0.01:
+                raise StepError(f"total on the page is {total}, expected {want:.2f} ({hours} h x {rate_txt})")
+            log.info("total %.2f matches %d h x %s", total, hours, rate_txt)
             _timing("fill", t0)
+
+            # ---- next step: the recap page (the only forward click; nothing is sent) ----
+            state["step"] = "recap"
+            t0 = time.monotonic()
+            await page.get_by_role("button", name="Étape suivante", exact=True).click()
+            await _settle(page)
+            await page.wait_for_timeout(1500)
+            await cap.shot(page, "recap")
+            cap.write_json("form_map_recap.json", {"url": page.url, "elements": await page.evaluate(FORM_MAP_JS)})
+            recap = await page.evaluate(RECAP_JS)
+            state["recap_step"] = redact(recap["active"] or recap["stepper"], secrets)[:300]
+            state["recap_buttons"] = [redact(b, secrets) for b in recap["buttons"]][:40]
+            state["recap_text"] = redact(recap["text"], secrets)[:2000]
+            log.info("recap step: %s; buttons: %s", state["recap_step"], state["recap_buttons"])
+            _timing("recap", t0)
 
             # ---- stop: nothing is sent ----
             state["step"] = "done"
@@ -290,7 +426,7 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
             except Exception as exc:
                 log.warning("logout skipped: %s", type(exc).__name__)
             return {"status": "dry_run_ok", "step": "done",
-                    "message": "form filled and captured; nothing sent"}
+                    "message": "recap page reached and captured; nothing sent"}
         except Exception as exc:
             step = state["step"]
             msg = redact(f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}", secrets)[:300]

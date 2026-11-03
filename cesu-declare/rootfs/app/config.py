@@ -19,6 +19,7 @@ class Options:
     imap_password: str
     imap_folder: str
     otp_sender_filter: str
+    employee_name: str
     log_level: str
 
     @property
@@ -47,5 +48,6 @@ def load_options(path: str = OPTIONS_PATH) -> Options:
         imap_password=text("imap_password", ""),
         imap_folder=text("imap_folder", "INBOX"),
         otp_sender_filter=text("otp_sender_filter", "urssaf"),
+        employee_name=text("employee_name", "ALEXANDRA"),
         log_level=text("log_level", "info"),
     )

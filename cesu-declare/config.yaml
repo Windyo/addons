@@ -1,10 +1,10 @@
 ---
 name: CESU Declare
-version: 0.1.0
+version: 0.2.0
 slug: cesu_declare
 description: >-
   Explorer / dry run for the monthly CESU (URSSAF) salary declaration:
-  logs in, fills the form, captures every page and stops. Never submits.
+  logs in, selects the period, fills the form, moves to the recap step, captures and stops. Never submits.
 url: https://github.com/windyo/addons/tree/master/cesu-declare
 arch:
   - amd64
@@ -24,6 +24,7 @@ options:
   imap_security: ssl
   imap_folder: INBOX
   otp_sender_filter: urssaf
+  employee_name: ALEXANDRA
   log_level: info
 schema:
   cesu_login: str
@@ -36,4 +37,5 @@ schema:
   imap_password: password?
   imap_folder: str?
   otp_sender_filter: str?
+  employee_name: str
   log_level: list(info|debug)

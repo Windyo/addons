@@ -10,7 +10,7 @@ from html.parser import HTMLParser
 
 MONTH_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
 OTP_RE = re.compile(r"(?<![\d])\d{6}(?![\d])")
-MAX_HOURS = 200
+MIN_HOURS, MAX_HOURS = 1, 200
 RATE_MIN, RATE_MAX = 10, 40
 
 
@@ -34,8 +34,8 @@ def validate_request(obj) -> dict:
     if not MONTH_RE.match(month):
         raise RequestError("month must be a string formatted YYYY-MM")
     hours = obj.get("hours")
-    if not _is_number(hours) or not 0 < hours <= MAX_HOURS:
-        raise RequestError(f"hours must be a number, 0 < hours <= {MAX_HOURS}")
+    if not _is_number(hours) or hours != int(hours) or not 1 <= hours <= MAX_HOURS:
+        raise RequestError(f"hours must be a whole number, {MIN_HOURS} to {MAX_HOURS}")
     rate = obj.get("rate")
     if not _is_number(rate) or not RATE_MIN <= rate <= RATE_MAX:
         raise RequestError(f"rate must be a number between {RATE_MIN} and {RATE_MAX}")
@@ -45,7 +45,7 @@ def validate_request(obj) -> dict:
     return {
         "request_id": request_id,
         "month": month,
-        "hours": float(hours),
+        "hours": int(hours),
         "rate": float(rate),
         "dry_run": dry_run,
     }
@@ -96,32 +96,39 @@ def extract_otp(plain: str | None, html: str | None = None) -> str | None:
     return None
 
 
-def nearest_minute_option(options: list[tuple[str, str]], minutes: float) -> str | None:
-    """options = [(value, label)]. Return the value whose number is nearest to `minutes`.
-
-    Non-numeric options (placeholders such as "") are ignored. Ties go to the lower value.
-    The number is read from the value, else from the first integer of the label.
-    """
-    best: tuple[float, float, str] | None = None
-    for value, label in options:
-        num = None
-        for text in (value, label):
-            m = re.search(r"\d+", text or "")
-            if m:
-                num = int(m.group(0))
-                break
-        if num is None:
-            continue
-        key = (abs(num - minutes), num, value)
-        if best is None or key < best:
-            best = key
-    return best[2] if best else None
+MONTHS_FR = ("Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août",
+             "Septembre", "Octobre", "Novembre", "Décembre")
 
 
-def split_hours(hours: float) -> tuple[int, float]:
-    """Whole hours (floor) and the remaining minutes as a float, e.g. 2.75 -> (2, 45.0)."""
-    whole = math.floor(hours + 1e-9)
-    return whole, round((hours - whole) * 60, 2)
+def period_label(month: str) -> str:
+    """'2026-11' -> 'Novembre 2026' (the label of the "Période d'emploi" option)."""
+    m = MONTH_RE.match(month)
+    if not m:
+        raise ValueError("month must be YYYY-MM")
+    return f"{MONTHS_FR[int(m.group(2)) - 1]} {m.group(1)}"
+
+
+_NUM_RE = re.compile(r"-?\d[\d\s\u00a0\u202f.]*(?:,\d+)?")
+
+
+def parse_fr_number(text: str | None) -> float | None:
+    """'192,00' -> 192.0, '1 234,50 €' -> 1234.5, '12.5' -> 12.5; None when there is no number."""
+    m = _NUM_RE.search(text or "")
+    if not m:
+        return None
+    raw = re.sub(r"[\s\u00a0\u202f]", "", m.group(0))
+    if "," in raw:
+        raw = raw.replace(".", "").replace(",", ".")
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def expected_total(hours: int, rate: float) -> float:
+    """hours * rate as typed on the site (rate rounded to cents first), rounded to cents."""
+    typed = Decimal(str(rate)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return float((typed * hours).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def format_rate_fr(rate: float) -> str:
@@ -148,32 +155,6 @@ def media_url_path(local_path: str) -> str:
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-_MONTHS = "janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre"
-_PERIOD_RE = re.compile(rf"p[ée]riode|\b(?:{_MONTHS})\b|\b\d{{2}}/\d{{4}}\b", re.I)
-_EMPLOYEE_RE = re.compile(r"salari[ée]|employ[ée]|\b(?:madame|monsieur|mme|m\.)\s", re.I)
-
-
-def _matching_lines(text: str, pattern: re.Pattern, limit: int = 5) -> str:
-    seen: list[str] = []
-    for line in text.splitlines():
-        line = " ".join(line.split())
-        if 2 < len(line) <= 160 and pattern.search(line) and line not in seen:
-            seen.append(line)
-            if len(seen) >= limit:
-                break
-    return " | ".join(seen)
-
-
-def find_period_text(page_text: str) -> str:
-    """Heuristic: page lines that mention a period / month / MM/YYYY."""
-    return _matching_lines(page_text, _PERIOD_RE)
-
-
-def find_employee_text(page_text: str) -> str:
-    """Heuristic: page lines that mention the employee."""
-    return _matching_lines(page_text, _EMPLOYEE_RE)
 
 
 class OtpFormatError(ValueError):

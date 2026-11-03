@@ -3,19 +3,18 @@ import pytest
 from logic import (
     RequestError,
     extract_otp,
-    find_employee_text,
-    find_period_text,
+    expected_total,
     format_rate_fr,
+    parse_fr_number,
+    period_label,
     media_url_path,
-    nearest_minute_option,
     redact,
-    split_hours,
     validate_request,
 )
 
 
 def req(**kw):
-    base = {"request_id": "abc", "month": "2026-10", "hours": 12.5, "rate": 16, "dry_run": True}
+    base = {"request_id": "abc", "month": "2026-10", "hours": 12, "rate": 16, "dry_run": True}
     base.update(kw)
     return base
 
@@ -23,7 +22,7 @@ def req(**kw):
 # ---- request validation ----
 def test_valid_request_normalised():
     r = validate_request(req(hours=12, rate=16.5))
-    assert r == {"request_id": "abc", "month": "2026-10", "hours": 12.0, "rate": 16.5, "dry_run": True}
+    assert r == {"request_id": "abc", "month": "2026-10", "hours": 12, "rate": 16.5, "dry_run": True}
 
 
 def test_dry_run_defaults_true_and_is_echoed():
@@ -36,7 +35,7 @@ def test_dry_run_defaults_true_and_is_echoed():
 @pytest.mark.parametrize("bad", [
     {"month": "2026-13"}, {"month": "2026-00"}, {"month": "26-10"}, {"month": "2026-1"},
     {"month": "2026-10-01"}, {"month": 202610}, {"month": None},
-    {"hours": 0}, {"hours": -1}, {"hours": 200.01}, {"hours": "3"}, {"hours": True},
+    {"hours": 0}, {"hours": -1}, {"hours": 200.01}, {"hours": 201}, {"hours": 12.5}, {"hours": 0.25}, {"hours": "3"}, {"hours": True},
     {"hours": float("nan")}, {"hours": float("inf")},
     {"rate": 9.99}, {"rate": 40.01}, {"rate": "16"}, {"rate": False}, {"rate": None},
     {"request_id": ""}, {"request_id": "  "}, {"request_id": 5}, {"request_id": "x" * 101},
@@ -53,7 +52,7 @@ def test_non_object_rejected(obj):
         validate_request(obj)
 
 
-@pytest.mark.parametrize("ok", [{"hours": 200}, {"hours": 0.25}, {"rate": 10}, {"rate": 40}])
+@pytest.mark.parametrize("ok", [{"hours": 200}, {"hours": 1}, {"hours": 12.0}, {"rate": 10}, {"rate": 40}])
 def test_boundaries_accepted(ok):
     validate_request(req(**ok))
 
@@ -99,34 +98,37 @@ def test_otp_falls_back_to_html_when_plain_has_none():
     assert extract_otp("Voir la version HTML", "<div>Code : 135790</div>") == "135790"
 
 
-# ---- minutes nearest ----
-OPTS = [("", "--"), ("0", "00"), ("15", "15"), ("30", "30"), ("45", "45")]
-
-
-@pytest.mark.parametrize("minutes,expected", [
-    (0, "0"), (6, "0"), (7.5, "0"),  # tie 7.5 -> lower
-    (8, "15"), (22, "15"), (23, "30"), (30, "30"), (40, "45"), (59.4, "45"),
+# ---- period / total ----
+@pytest.mark.parametrize("month,label", [
+    ("2026-01", "Janvier 2026"), ("2026-02", "Février 2026"), ("2026-08", "Août 2026"),
+    ("2026-11", "Novembre 2026"), ("2027-12", "Décembre 2027"),
 ])
-def test_nearest_minute(minutes, expected):
-    assert nearest_minute_option(OPTS, minutes) == expected
+def test_period_label(month, label):
+    assert period_label(month) == label
 
 
-def test_nearest_minute_reads_label_when_value_not_numeric():
-    assert nearest_minute_option([("a", "10 min"), ("b", "40 min")], 35) == "b"
+def test_period_label_rejects_bad_month():
+    with pytest.raises(ValueError):
+        period_label("2026-13")
 
 
-def test_nearest_minute_no_numeric_options():
-    assert nearest_minute_option([("", "--")], 10) is None
-    assert nearest_minute_option([], 10) is None
+@pytest.mark.parametrize("text,expected", [
+    ("192,00", 192.0), ("1 234,50 €", 1234.5), ("1\u202f234,5", 1234.5), ("12.5", 12.5),
+    ("1.234,50", 1234.5), (" 0,00 ", 0.0),
+])
+def test_parse_fr_number(text, expected):
+    assert parse_fr_number(text) == expected
 
 
-def test_split_hours():
-    assert split_hours(3) == (3, 0.0)
-    assert split_hours(2.75) == (2, 45.0)
-    assert split_hours(12.5) == (12, 30.0)
-    assert split_hours(0.25) == (0, 15.0)
-    assert split_hours(7.1 + 0.2) == (7, 18.0)  # float noise below 1e-9 does not drop an hour
-    assert split_hours(3.0000000001)[0] == 3
+@pytest.mark.parametrize("text", ["", None, "abc", "--"])
+def test_parse_fr_number_none(text):
+    assert parse_fr_number(text) is None
+
+
+def test_expected_total():
+    assert expected_total(12, 16) == 192.0
+    assert expected_total(10, 16.5) == 165.0
+    assert expected_total(7, 12.345) == 86.45  # rate typed as 12,35
 
 
 # ---- French rate ----
@@ -145,10 +147,3 @@ def test_redact():
 
 def test_media_path():
     assert media_url_path("/media/cesu/20261103T101500Z/05-form.png") == "/media/local/cesu/20261103T101500Z/05-form.png"
-
-
-def test_period_and_employee_text():
-    text = "Déclarer\nPériode : octobre 2026\nSalarié : Mme Dupont\nBouton\n"
-    assert "octobre 2026" in find_period_text(text)
-    assert "Dupont" in find_employee_text(text)
-    assert find_period_text("rien") == ""

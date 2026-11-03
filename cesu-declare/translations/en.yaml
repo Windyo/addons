@@ -31,6 +31,11 @@ configuration:
   otp_sender_filter:
     name: Code sender filter
     description: Only messages whose From contains this text (case-insensitive) are considered.
+  employee_name:
+    name: Employee name
+    description: >-
+      Text that must appear (case-insensitive) in the selected "Salarié" on the form. The run stops
+      with step "employee" if it does not.
   log_level:
     name: Log level
     description: debug adds per-poll IMAP details. Secrets and codes are never logged.

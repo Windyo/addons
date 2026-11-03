@@ -3,16 +3,21 @@
 Automates the monthly CESU (URSSAF, France) salary declaration of a household employee on
 <https://www.cesu.urssaf.fr> with a headless Chromium (Playwright).
 
-## Version 0.1.0 is a dry run only
+## Version 0.2.0 is still a dry run
 
 This release is an **explorer**. For each request it logs in, handles the one-time email code, opens
-the declaration form, fills the hours and the net hourly rate, captures every page, and **stops**.
-It has no code path that submits a declaration, not behind an option, not at all. The only controls it
-clicks are: *Se connecter*, *Vérifier*, *Déclarer*, *Continuer* and *Se déconnecter*. Submission is
-planned for 0.2 once the captured pages have been reviewed.
+the declaration form, checks the employee, **selects the period**, fills the whole hours and the net
+hourly rate, checks the computed total, moves to the **recap step** with *Étape suivante*, captures it
+and **stops**. It has no code path that saves or sends a declaration, not behind an option, not at all.
+The only controls it clicks are: *Se connecter*, *Vérifier*, *Déclarer*, *Continuer* (the information
+modal, only if shown), *Étape suivante* and *Se déconnecter*.
 
-The requested `month` is echoed and checked, but 0.1 does not yet choose the period on the site: it
-records what the page shows (`period_seen`).
+Form checks, each one stops the run with its own `step` on failure:
+
+- `employee`: the selected "Salarié" must contain the `employee_name` option (case-insensitive).
+- `period`: `month` is mapped to the French label ("2026-11" -> "Novembre 2026") and selected in
+  "Période d'emploi" before anything else is filled; the selected text is re-read after the page settles.
+- `total`: "Total net déclaré" must equal hours x rate (rate rounded to cents) within 0.01.
 
 ## Options
 
@@ -25,6 +30,7 @@ records what the page shows (`period_seen`).
 | `imap_user` / `imap_password` | | Mailbox credentials. |
 | `imap_folder` | `INBOX` | Folder to search. |
 | `otp_sender_filter` | `urssaf` | Only messages whose From contains this (case-insensitive) count. |
+| `employee_name` | `ALEXANDRA` | Text the selected "Salarié" must contain (case-insensitive). |
 | `log_level` | `info` | `info` or `debug`. Passwords and codes are never logged. |
 
 ## One-time code
@@ -69,16 +75,16 @@ bridge-specific username and password shown in the Bridge app, not your Proton l
 action: hassio.addon_stdin
 data:
   addon: 8634c18d_cesu_declare
-  input: '{"request_id": "2026-10-001", "month": "2026-10", "hours": 12.5, "rate": 16.5, "dry_run": true}'
+  input: '{"request_id": "2026-10-001", "month": "2026-10", "hours": 12, "rate": 16.5, "dry_run": true}'
 ```
 
 | Field | Rule |
 |---|---|
 | `request_id` | non-empty string, up to 100 characters |
 | `month` | `YYYY-MM` |
-| `hours` | number, `0 < hours <= 200`; the whole part goes in `#nbHeure`, the rest in the minutes select if one exists (nearest option) |
+| `hours` | **whole number**, 1 to 200 (the site only has whole hours); goes in `#nbHeure` |
 | `rate` | number, `10 <= rate <= 40`; typed in French format (`16` or `16,50`) |
-| `dry_run` | echoed back; 0.1 is always a dry run |
+| `dry_run` | echoed back; 0.2 is always a dry run |
 
 One run at a time: a request sent during a run gets `status: busy`.
 
@@ -86,8 +92,9 @@ One run at a time: a request sent during a run gets `status: busy`.
 
 Everything is written to `/media/cesu/<UTC timestamp>/` (Media in Home Assistant, `media-source://media_source/local/cesu/...`):
 `NN-<step>.png` (full page) and `NN-<step>.html` for every step, plus `form_map.json` (every visible
-input, select, textarea and button with id, name, label, type, value and select options, and the period
-and employee text found), `form_map_declare.json`, `form_map_otp.json` and `form_map_filled.json`.
+input, select, textarea and button with id, name, label, type, value and select options, plus the period,
+employee and activity selected), `form_map_declare.json`, `form_map_otp.json`, `form_map_filled.json` and
+`form_map_recap.json`. The last screenshot, `NN-recap.png`, is the recap page.
 On failure an `NN-error.png/.html` is added. Folders older than 90 days are deleted at start.
 
 Screenshots show the employer's account pages. Treat the folder as private.
@@ -97,14 +104,19 @@ Screenshots show the employer's account pages. Treat the folder as private.
 Result, `cesu_declare_result`:
 
 ```json
-{"request_id": "2026-10-001", "month": "2026-10", "hours": 12.5, "rate": 16.5, "dry_run": true,
- "status": "dry_run_ok", "step": "done", "message": "form filled and captured; nothing sent",
- "period_seen": "Période : octobre 2026", "employee_seen": "Salarié : ...",
- "screenshot": "/media/local/cesu/20261103T101500Z/07-form-filled.png"}
+{"request_id": "2026-10-001", "month": "2026-10", "hours": 12, "rate": 16.5, "dry_run": true,
+ "status": "dry_run_ok", "step": "done", "message": "recap page reached and captured; nothing sent",
+ "period_seen": "Octobre 2026", "employee_seen": "ALEXANDRA ...",
+ "activity_seen": "Entretien de la maison et travaux ménagers", "total_seen": 198.0,
+ "recap_step": "2 Enregistrer", "recap_buttons": ["Étape précédente", "..."],
+ "recap_text": "main text of the recap page, whitespace collapsed, at most 2000 characters",
+ "screenshot": "/media/local/cesu/20261103T101500Z/09-recap.png"}
 ```
 
 `status` is `dry_run_ok`, `error`, `busy` or `invalid`. `step` names where it stopped (`home`, `login`,
-`otp`, `otp_rejected`, `declare`, `continue`, `form`, `fill`, `request`, `done`). `period_seen` and
-`employee_seen` are best-effort text found on the form page.
+`otp`, `otp_rejected`, `declare`, `continue`, `form`, `employee`, `period`, `fill`, `total`, `recap`,
+`request`, `done`). `period_seen`, `employee_seen` and `activity_seen` are the selected option texts;
+`recap_step` is the active stepper text (or the whole stepper), `recap_buttons` the visible buttons and
+links of the main content. On failure the fields known so far are still filled.
 
 Code request, `cesu_otp_needed` (ask mode): `{"request_id": "...", "month": "...", "timeout_s": 300}`.

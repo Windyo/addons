@@ -1,4 +1,4 @@
-"""CESU Declare add-on, v0.1.0: dry-run explorer. Long-running; reads JSON lines on stdin."""
+"""CESU Declare add-on, v0.2.0: dry-run explorer. Long-running; reads JSON lines on stdin."""
 from __future__ import annotations
 
 import asyncio
@@ -84,6 +84,11 @@ def result(req: dict | None, status: str, step: str, message: str, **extra) -> d
         "message": message,
         "period_seen": extra.get("period_seen", ""),
         "employee_seen": extra.get("employee_seen", ""),
+        "activity_seen": extra.get("activity_seen", ""),
+        "total_seen": extra.get("total_seen"),
+        "recap_step": extra.get("recap_step", ""),
+        "recap_buttons": extra.get("recap_buttons", []),
+        "recap_text": extra.get("recap_text", ""),
         "screenshot": extra.get("screenshot", ""),
     }
 
@@ -126,7 +131,9 @@ async def handle_run(opt, req: dict, broker: OtpBroker) -> None:
         shot = media_url_path(str(cap.last_png))
     data = result(req, outcome["status"], outcome["step"], outcome["message"],
                   period_seen=state.get("period_seen", ""), employee_seen=state.get("employee_seen", ""),
-                  screenshot=shot)
+                  activity_seen=state.get("activity_seen", ""), total_seen=state.get("total_seen"),
+                  recap_step=state.get("recap_step", ""), recap_buttons=state.get("recap_buttons", []),
+                  recap_text=state.get("recap_text", ""), screenshot=shot)
     await asyncio.to_thread(post_event, data)
 
 
@@ -225,7 +232,7 @@ async def dispatch_line(line: str, opt, broker: OtpBroker, current: asyncio.Task
 async def main() -> None:
     opt = load_options()
     setup_logging(opt.log_level, opt.secrets)
-    log.info("CESU Declare v0.1.0 started (dry run only; no declaration is ever sent)")
+    log.info("CESU Declare v0.2.0 started (dry run only; no declaration is ever sent)")
     log.info("code source: %s", f"IMAP {opt.imap_host}" if opt.imap_mode else "ask (stdin)")
     cleanup_old_runs()
     broker = OtpBroker()
