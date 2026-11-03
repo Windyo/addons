@@ -1,0 +1,39 @@
+---
+name: CESU Declare
+version: 0.1.0
+slug: cesu_declare
+description: >-
+  Explorer / dry run for the monthly CESU (URSSAF) salary declaration:
+  logs in, fills the form, captures every page and stops. Never submits.
+url: https://github.com/windyo/addons/tree/master/cesu-declare
+arch:
+  - amd64
+# No `image:` on purpose: the Supervisor builds this add-on locally from the Dockerfile.
+startup: application
+boot: auto
+# hassio.addon_stdin writes JSON lines to the container's stdin.
+stdin: true
+# Posts the cesu_declare_result event through the Supervisor's Core API proxy.
+homeassistant_api: true
+map:
+  - media:rw
+options:
+  cesu_login: ""
+  cesu_password: ""
+  imap_port: 993
+  imap_security: ssl
+  imap_folder: INBOX
+  otp_sender_filter: urssaf
+  log_level: info
+schema:
+  cesu_login: str
+  cesu_password: password
+  # All imap_* options are optional. imap_host empty = "ask" mode (the code comes from stdin).
+  imap_host: str?
+  imap_port: int(1,65535)?
+  imap_security: list(ssl|starttls|starttls_insecure)?
+  imap_user: str?
+  imap_password: password?
+  imap_folder: str?
+  otp_sender_filter: str?
+  log_level: list(info|debug)

@@ -1,0 +1,36 @@
+---
+configuration:
+  cesu_login:
+    name: CESU login
+    description: Identifiant of the employer account on cesu.urssaf.fr.
+  cesu_password:
+    name: CESU password
+    description: Password of the employer account.
+  imap_host:
+    name: IMAP host
+    description: >-
+      Optional. Leave empty (default) to type the code yourself: the add-on fires cesu_otp_needed and waits
+      for it on stdin. Set it to read the code from a mailbox instead (e.g. the Proton Mail Bridge host).
+  imap_port:
+    name: IMAP port
+    description: 993 for ssl, 143 for starttls. Proton Mail Bridge uses 1143 by default.
+  imap_security:
+    name: IMAP security
+    description: >-
+      ssl = implicit TLS, starttls = upgrade after connecting, starttls_insecure = upgrade but accept
+      a self-signed certificate (local Proton Mail Bridge).
+  imap_user:
+    name: IMAP user
+    description: Mailbox login. For Proton Mail Bridge, the bridge-specific username.
+  imap_password:
+    name: IMAP password
+    description: Mailbox password. For Proton Mail Bridge, the bridge-specific password.
+  imap_folder:
+    name: IMAP folder
+    description: Folder searched for the code.
+  otp_sender_filter:
+    name: Code sender filter
+    description: Only messages whose From contains this text (case-insensitive) are considered.
+  log_level:
+    name: Log level
+    description: debug adds per-poll IMAP details. Secrets and codes are never logged.

@@ -1,0 +1,2 @@
+# Same version as the base image, so the pip step is a no-op that guards against drift.
+playwright==1.59.0
