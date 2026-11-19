@@ -1,0 +1,22 @@
+---
+name: GPU Probe
+version: 0.1.0
+slug: gpu-probe
+description: >-
+  Throw-away test: can an add-on with no kernel rights use the NVIDIA GPU that another add-on
+  loaded? Runs nvidia-smi and a small CUDA job, reports sensor.gpu_probe_status.
+url: https://github.com/windyo/addons/tree/master/gpu-probe
+arch:
+  - amd64
+# No `image:` on purpose: the Supervisor builds this add-on locally from the Dockerfile.
+# The initialize stage runs before the services stage, where whisper-cuda loads the driver. After a
+# host reboot the probe is already running when the /dev/nvidia* nodes appear.
+startup: initialize
+boot: auto
+# Device rule "a *:* rwm" (honoured only with Protection mode off): the one right a GPU consumer
+# gets. No kernel_modules, no privileged capabilities, default AppArmor profile.
+full_access: true
+# Publishes sensor.gpu_probe_status.
+homeassistant_api: true
+options: {}
+schema: {}

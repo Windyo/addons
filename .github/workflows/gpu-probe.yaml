@@ -1,0 +1,56 @@
+name: gpu-probe
+
+# Check only: the Supervisor builds this add-on on the device, so nothing is pushed to GHCR.
+on:
+  push:
+    paths:
+      - "gpu-probe/**"
+      - ".github/workflows/gpu-probe.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: A consumer gets no kernel rights
+        run: |
+          yq -e '.full_access == true' gpu-probe/config.yaml
+          yq -e '(has("kernel_modules") or has("privileged") or has("apparmor") or has("devices") or has("host_pid") or has("image")) | not' gpu-probe/config.yaml
+
+      - name: Build image (same Dockerfile the Supervisor builds)
+        run: |
+          docker build --build-arg BUILD_VERSION="$(yq -r .version gpu-probe/config.yaml)" -t gpu-probe:test gpu-probe
+          echo "::notice title=Image size::$(docker image inspect -f '{{.Size}}' gpu-probe:test | numfmt --to=iec)"
+
+      - name: Image contents
+        run: |
+          docker run --rm gpu-probe:test bash -c '
+            set -e
+            python3 -I -m py_compile /usr/local/bin/probe.py /usr/local/bin/cuda_check.py
+            ldconfig -p | grep -E "libcuda.so.1|libnvidia-ml.so.1|libnvidia-ptxjitcompiler.so.1"
+            test "$(cat /opt/nvidia/VERSION)" = 580.196.07
+            test ! -e /usr/bin/nvidia-modprobe
+            if find / -xdev -name "libcudnn*" | grep .; then echo "cuDNN must never ship"; exit 1; fi'
+
+      # No GPU on the runner: the probe's own code still runs up to cuInit.
+      - name: Probe facts and CUDA check without a GPU
+        shell: bash
+        run: |
+          docker run --rm gpu-probe:test python3 /usr/local/bin/probe.py --facts | tee facts.json
+          jq -e '.kernel_rights == [] and (.boot_id | length) == 36 and .userspace == "580.196.07"' facts.json
+          docker run --rm gpu-probe:test python3 /usr/local/bin/cuda_check.py | tee cuda.json || true
+          jq -e '.ok == false and .failed_step == "cuInit"' cuda.json
+
+      - name: PTX kernel assembles for sm_61
+        run: |
+          python3 -m venv "$RUNNER_TEMP/nvcc"
+          "$RUNNER_TEMP/nvcc/bin/pip" install --quiet nvidia-cuda-nvcc-cu12==12.9.86
+          ptxas=$(find "$RUNNER_TEMP/nvcc" -path "*cuda_nvcc/bin/ptxas" | head -1)
+          "$ptxas" --version | tail -1
+          "$ptxas" -arch=sm_61 -v -o "$RUNNER_TEMP/saxpy.cubin" gpu-probe/rootfs/usr/local/share/gpu-probe/saxpy.ptx
