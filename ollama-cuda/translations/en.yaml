@@ -1,0 +1,27 @@
+---
+configuration:
+  model:
+    name: Model
+    description: Ollama model tag. Pulled on first start into the add-on data.
+  context_length:
+    name: Context length
+    description: Tokens of context. 8192 fits Qwen3-4B next to Whisper on an 8 GB card.
+  flash_attention:
+    name: Flash attention
+    description: >-
+      auto lets Ollama decide (on for Pascal). On Pascal it can be slower; the benchmark measures
+      both. A q8_0 KV cache needs it on.
+  kv_cache_type:
+    name: KV cache type
+    description: f16, or q8_0 to halve the cache memory (needs flash attention).
+  whisper_reserve_mib:
+    name: VRAM kept free for Whisper (MiB)
+    description: Ollama leaves this much VRAM unused so Whisper can still load on the GPU.
+  benchmark:
+    name: Run the benchmark at start
+    description: >-
+      Measure load time, VRAM and answer latency for flash attention off/on and f16/q8_0 KV,
+      then publish sensor.ollama_cuda_benchmark. Switch back off afterwards.
+  benchmark_8b:
+    name: Include Qwen3-8B in the benchmark
+    description: Reference only; pulls about 5 GB.

@@ -1,0 +1,41 @@
+---
+name: Ollama CUDA
+version: 0.1.0
+slug: ollama-cuda
+description: >-
+  Local LLM (Ollama, Qwen3-4B) on an NVIDIA GPU under HAOS, for a chat-only fallback
+  conversation agent and AI Tasks. Needs the NVIDIA Driver add-on.
+url: https://github.com/windyo/addons/tree/master/ollama-cuda
+arch:
+  - amd64
+# No `image:` on purpose: the Supervisor builds this add-on locally from the Dockerfile.
+startup: application
+# Never start on boot until the phase-3 benchmark has passed on this machine.
+boot: manual
+# Device rule "a *:* rwm" (honoured only with Protection mode off): opens /dev/nvidia*.
+# No kernel rights, default AppArmor profile.
+full_access: true
+# /share/nvidia/state.json from the NVIDIA Driver add-on.
+map:
+  - share:ro
+# Publishes sensor.ollama_cuda_status (and sensor.ollama_cuda_benchmark).
+homeassistant_api: true
+# No `ports:`: Ollama has no auth. Home Assistant reaches it on the internal network at
+# http://8634c18d-ollama-cuda:11434.
+watchdog: tcp://[HOST]:11434
+options:
+  model: qwen3:4b-instruct-2507-q4_K_M
+  context_length: 8192
+  flash_attention: auto
+  kv_cache_type: f16
+  whisper_reserve_mib: 1536
+  benchmark: false
+  benchmark_8b: false
+schema:
+  model: str
+  context_length: int(2048,32768)
+  flash_attention: list(auto|on|off)
+  kv_cache_type: list(f16|q8_0)
+  whisper_reserve_mib: int(0,4096)
+  benchmark: bool
+  benchmark_8b: bool

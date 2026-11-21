@@ -1,0 +1,58 @@
+name: ollama-cuda
+
+# Check only: the Supervisor builds this add-on on the device, so nothing is pushed to GHCR.
+on:
+  push:
+    paths:
+      - "ollama-cuda/**"
+      - ".github/workflows/ollama-cuda.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: A consumer gets no kernel rights, no published port
+        run: |
+          yq -e '.full_access == true' ollama-cuda/config.yaml
+          yq -e '(has("kernel_modules") or has("privileged") or has("apparmor") or has("ports") or has("image")) | not' ollama-cuda/config.yaml
+
+      - name: Build image (same Dockerfile the Supervisor builds)
+        run: |
+          docker build --build-arg BUILD_VERSION="$(yq -r .version ollama-cuda/config.yaml)" -t ollama-cuda:test ollama-cuda
+          echo "::notice title=Image size::$(docker image inspect -f '{{.Size}}' ollama-cuda:test | numfmt --to=iec)"
+
+      - name: Image contents
+        run: |
+          docker run --rm ollama-cuda:test bash -c '
+            set -e
+            python3 -I -m py_compile /usr/local/bin/main.py /usr/local/bin/bench.py
+            ollama --version
+            ls /usr/lib/ollama
+            test -d /usr/lib/ollama/cuda_v12 && test ! -e /usr/lib/ollama/cuda_v13
+            ldconfig -p | grep -E "libcuda.so.1|libnvidia-ml.so.1"
+            test "$(cat /opt/nvidia/VERSION)" = 580.196.07
+            test ! -e /usr/bin/nvidia-modprobe
+            if find / -xdev -name "libcudnn*" | grep .; then echo "cuDNN must never ship"; exit 1; fi'
+
+      # No GPU on the runner: the add-on must keep its port alive and wait, never serve on the CPU.
+      - name: Waits for the GPU without one
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/data" "$RUNNER_TEMP/share"
+          yq -o=json .options ollama-cuda/config.yaml > "$RUNNER_TEMP/data/options.json"
+          docker run -d --name llm -v "$RUNNER_TEMP/data:/data" -v "$RUNNER_TEMP/share:/share:ro" ollama-cuda:test
+          sleep 10
+          docker logs llm
+          docker logs llm 2>&1 | grep -q "waiting for the GPU: driver not loaded"
+          test "$(docker exec llm python3 -c 'import urllib.request as u, urllib.error as e
+          try: u.urlopen("http://127.0.0.1:11434/api/version")
+          except e.HTTPError as x: print(x.code)')" = 502
+          docker exec llm sh -c 'if grep -qx ollama /proc/[0-9]*/comm 2>/dev/null; then exit 1; fi'
+          docker rm -f llm
