@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- Speech-to-text only. Building and loading the driver moved to the **NVIDIA Driver** add-on;
+  install and start that first. This add-on no longer has kernel rights (no kernel_modules, no
+  capabilities, default AppArmor) and its image no longer carries the kernel toolchain.
+- Reads `/share/nvidia/state.json`: serves on the CPU at once when the GPU isn't ready, and moves
+  to CUDA by itself when it becomes ready.
+- Thermal: follows the driver add-on's `hot`/`ok`. If that add-on is stopped, keeps the GPU it
+  already uses and applies the same 85/78 °C thresholds itself.
+- Options `load_driver`, `build_jobs` and `retry_after_crash` removed. The old module cache in
+  the add-on data is deleted at start.
+- Status states are now `gpu_ready`, `gpu_unavailable` and `driver_mismatch`.
+
 ## 0.2.7
 
 - Benchmark cooling gate loosened: pause at 87 C until 80 C (was 80 -> 70), start each config at

@@ -7,32 +7,27 @@ It serves Whisper speech-to-text over Wyoming on port 10300. Home Assistant disc
 
 ## How it works
 
-HAOS has no NVIDIA driver and no NVIDIA container runtime. This add-on:
+The **NVIDIA Driver** add-on (same repository) builds and loads the driver and writes
+`/share/nvidia/state.json`. This add-on only reads that file:
 
-1. reads the running kernel version (`uname -r`) and its config (`/proc/config.gz`),
-2. downloads that exact kernel version from kernel.org and builds the NVIDIA 580.196.07
-   kernel modules against it (once per kernel, about 10–20 min, cached in the add-on data),
-3. checks that the module's version magic matches the running kernel exactly,
-4. loads `nvidia.ko` and `nvidia-uvm.ko` into the HAOS kernel and creates `/dev/nvidia*`
-   inside the container,
-5. starts faster-whisper on the GPU (or on the CPU as a fallback),
-6. reports to Home Assistant as `sensor.whisper_cuda_status`.
-
-After an HAOS update the kernel changes, and the add-on builds the driver again on its next start.
+1. If the GPU is ready (fresh `ready` state for this boot, matching driver version), it serves
+   Whisper on CUDA. If not, it serves on the CPU at once and switches to the GPU when it becomes
+   ready, with no restart.
+2. While the driver add-on reports the GPU `hot`, it serves from the CPU, and returns when it
+   is `ok` again. If the driver add-on is stopped, it keeps the GPU it already uses and applies
+   the same thresholds itself (85 °C or a hardware slowdown → CPU, back at 78 °C).
+3. It reports to Home Assistant as `sensor.whisper_cuda_status`.
 
 ## Before installing
 
-- Take a full backup.
-- After installing, turn **Protection mode** off on the add-on page. The add-on needs it to load a kernel module.
-- Leave **Start on boot** off until the driver has run without problems for a while.
+- Install and start the **NVIDIA Driver** add-on first.
+- After installing, turn **Protection mode** off on the add-on page. Without it the add-on can't
+  open `/dev/nvidia*` and stays on the CPU.
 
 ## Options
 
 | Option | Default | Meaning |
 |---|---|---|
-| `load_driver` | `false` | Off: build and verify only. On: load the driver into the kernel. |
-| `build_jobs` | `4` | Compile jobs for the build. |
-| `retry_after_crash` | `false` | Allow one more load after an attempt that never finished before a reboot. |
 | `model` | `large-v3-turbo` | Whisper model on the GPU. |
 | `compute_type` | `int8_float32` | `int8_float32` or `float32` on Pascal; `float16` is slow there. |
 | `beam_size` | `1` | 1 = fastest; with name biasing it matched beam 5 on this house's commands. |
@@ -52,10 +47,10 @@ Normal voice use is short bursts and stays far below that.
 
 ## Status sensor
 
-`sensor.whisper_cuda_status` states: `no_gpu`, `building`, `build_failed`, `built`,
-`load_refused`, `load_failed`, `gpu_ready`. The attributes include the kernel, driver, vermagic,
-any config drift, log tails on failure, and GPU temperature, power, VRAM and clocks when ready.
+`sensor.whisper_cuda_status` states: `gpu_ready`, `gpu_unavailable` (with `gpu_reason`) or
+`driver_mismatch`. The attributes show the device in use (`stt_device`), the model, any thermal
+hold, whether the driver add-on's state is fresh, and GPU temperature, power, VRAM and clocks.
 
 ## Undo
 
-Stop or uninstall the add-on and reboot the host. Nothing is installed into HAOS itself.
+Stop or uninstall the add-on. Nothing is installed into HAOS itself.

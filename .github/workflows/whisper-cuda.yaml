@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build-push-test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,6 +49,8 @@ jobs:
             /opt/venv/bin/python -c "import ctranslate2, faster_whisper, wyoming_faster_whisper, piper, aiohttp; print(ctranslate2.__version__)"
             /opt/venv/bin/python -m wyoming_faster_whisper --version
             ldconfig -p | grep -E "libcuda.so.1|libnvidia-ml.so.1|libcublas.so.12|libcublasLt.so.12"
+            test ! -e /opt/nvidia/kernel-src && test ! -e /usr/bin/nvidia-modprobe
+            if find / -xdev -name "libcudnn*" | grep .; then echo "cuDNN must never ship"; exit 1; fi
             nvidia-smi --version | head -1 || true'
 
       # End-to-end on CPU: Piper test speech -> faster-whisper -> scoring. Gates the push, since a
@@ -67,66 +69,31 @@ jobs:
           echo "::notice title=CPU smoke benchmark::$(jq -c '.results[0] | {latency_mean_s, fr_clean, en_clean, fr_noisy, en_noisy, silence_halluc_words}' "$r")"
           echo "::notice title=Piper CPU synthesis::$(jq -c .piper_cpu "$r")"
 
+      # No driver on the runner: 0.3 must serve from the CPU at once, never wait for the GPU.
+      - name: Starts on the CPU without a driver
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/addon-data" "$RUNNER_TEMP/share"
+          yq -o=json '.options + {"cpu_fallback_model": "base"}' whisper-cuda/config.yaml > "$RUNNER_TEMP/addon-data/options.json"
+          docker run -d --name stt -v "$RUNNER_TEMP/addon-data:/data" -v "$RUNNER_TEMP/share:/share:ro" whisper-cuda:test
+          for i in $(seq 1 60); do docker exec stt nc -z 127.0.0.1 10300 && break; sleep 5; done
+          docker logs stt 2>&1 | tail -n 20
+          docker exec stt nc -z 127.0.0.1 10300
+          docker logs stt 2>&1 | grep -q "speech-to-text on CPU (gpu_unavailable: driver not loaded)"
+          test "$(docker exec stt cat /tmp/stt.mode)" = cpu
+          docker rm -f stt
+
       - name: Push to GHCR
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker tag whisper-cuda:test "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
           docker push "${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}"
 
-      # The compile test is slow (~12 min) and only matters when the build path changes; the
-      # device gates it anyway (a failed build never loads). It reports, it doesn't block the push.
-      - name: Does the driver build path change?
-        id: ch
-        run: |
-          before="${{ github.event.before }}"
-          if [ "${{ github.event_name }}" != push ] || [ -z "$before" ] || [ "$before" = 0000000000000000000000000000000000000000 ]; then
-            echo "compile=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          git diff --name-only "$before" "${{ github.sha }}" | tee /dev/stderr \
-            | grep -qE '^whisper-cuda/(Dockerfile|tests/|rootfs/usr/local/bin/nv-build-modules\.sh|rootfs/usr/local/share/)|^\.github/workflows/' \
-            && echo "compile=true" >> "$GITHUB_OUTPUT" || echo "compile=false" >> "$GITHUB_OUTPUT"
-
-      # The same script the add-on runs on the device, against the config read out of the
-      # official HAOS 18.3 kernel (IKCONFIG). Proves the driver builds for that exact kernel.
-      - name: Compile driver for HAOS 18.3 (6.18.52-haos)
-        if: steps.ch.outputs.compile == 'true'
-        # Explicit bash = -eo pipefail, so a failing build is not masked by tee.
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/out"
-          docker run --rm \
-            -v "$PWD/whisper-cuda/tests:/tests:ro" -v "$RUNNER_TEMP/out:/out" \
-            whisper-cuda:test \
-            nv-build-modules.sh 6.18.52-haos /tests/haos-18.3-kernel.config /out/6.18.52-haos "$(nproc)" /usr/local/share/whisper-cuda/linux-patches \
-            2>&1 | tee "$RUNNER_TEMP/out/build.log"
-
-      - name: Check result
-        if: steps.ch.outputs.compile == 'true'
-        run: |
-          d="$RUNNER_TEMP/out/6.18.52-haos"
-          ls -la "$d"
-          echo "vermagic: '$(cat "$d/vermagic")'"
-          echo "config drift:"; cat "$d/config-drift.txt"
-          test "$(cat "$d/vermagic")" = "6.18.52-haos SMP preempt mod_unload "
-          docker run --rm -v "$d:/m:ro" whisper-cuda:test modinfo /m/nvidia.ko /m/nvidia-uvm.ko
-
       # Logs need a GitHub login; annotations are public, so surface the key facts there.
       - name: Report failure details
         if: failure()
         run: |
-          mkdir -p "$RUNNER_TEMP/out"
-          d="$RUNNER_TEMP/out/6.18.52-haos"
-          tail -n 80 "$RUNNER_TEMP/out/build.log" > "$RUNNER_TEMP/out/build-tail.txt" 2>/dev/null || true
-          tail -n 60 "$RUNNER_TEMP/bench.log" > "$RUNNER_TEMP/bench-tail.txt" 2>/dev/null || true
-          for f in "$d/config-drift-detail.txt" "$RUNNER_TEMP/out/build-tail.txt" "$RUNNER_TEMP/bench-tail.txt"; do
-            [ -s "$f" ] || continue
-            body=$(head -c 30000 "$f" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
-            echo "::error title=$(basename "$f")::$body"
-          done
-
-      - uses: actions/upload-artifact@v4
-        if: always() && steps.ch.outputs.compile == 'true'
-        with:
-          name: driver-6.18.52-haos
-          path: ${{ runner.temp }}/out
-          if-no-files-found: ignore
+          f="$RUNNER_TEMP/bench.log"
+          [ -s "$f" ] || exit 0
+          body=$(tail -n 60 "$f" | head -c 30000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+          echo "::error title=bench-tail::$body"

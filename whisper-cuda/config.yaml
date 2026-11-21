@@ -1,6 +1,6 @@
 ---
 name: Whisper CUDA
-version: 0.2.7
+version: 0.3.0
 slug: whisper-cuda
 description: >-
   Whisper speech-to-text on an NVIDIA GPU under HAOS (Pascal / driver 580),
@@ -10,28 +10,21 @@ arch:
   - amd64
 image: ghcr.io/windyo/whisper-cuda-{arch}
 startup: services
-# Never start on boot until the driver has proven stable on this machine.
 boot: manual
-# Device rule "a *:* rwm": the /dev/nvidia* nodes created after loading are usable.
+# Device rule "a *:* rwm" (honoured only with Protection mode off): opens the /dev/nvidia* nodes
+# the NVIDIA Driver add-on creates. No kernel rights, default AppArmor profile (proven by
+# gpu-probe, 2026-11-20).
 full_access: true
-# CAP_SYS_MODULE + host /lib/modules (read-only) for the vermagic reference and deps.
-kernel_modules: true
-privileged:
-  - SYS_MODULE
-  - MKNOD
-  # mount the kernel's devtmpfs to create /dev/nvidia* (the add-on's /dev is read-only)
-  - SYS_ADMIN
-apparmor: false
+# /share/nvidia/state.json from the NVIDIA Driver add-on.
+map:
+  - share:ro
 # Publishes sensor.whisper_cuda_status; reads exposed names for biasing.
 homeassistant_api: true
-# Reads the installed HAOS version (/os/info) to fetch that release's kernel patches.
-hassio_api: true
 discovery:
   - wyoming
 ports:
   "10300/tcp": null
 options:
-  load_driver: false
   model: large-v3-turbo
   compute_type: int8_float32
   beam_size: 1
@@ -40,11 +33,8 @@ options:
   cpu_fallback_model: small
   benchmark: false
   benchmark_configs: fr-large-v3 int8 b5 +names +vad,fr-distil int8 b5 +names +vad
-  build_jobs: 4
-  retry_after_crash: false
   debug: false
 schema:
-  load_driver: bool
   model: str
   compute_type: list(int8_float32|float32|int8|float16|int8_float16)
   beam_size: int(1,10)
@@ -53,6 +43,4 @@ schema:
   cpu_fallback_model: str
   benchmark: bool
   benchmark_configs: str
-  build_jobs: int(1,8)
-  retry_after_crash: bool
   debug: bool
