@@ -1,0 +1,61 @@
+name: web-search
+
+# Check only: the Supervisor builds this add-on on the device, so nothing is pushed to GHCR.
+on:
+  push:
+    paths:
+      - "web-search/**"
+      - ".github/workflows/web-search.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No special rights, no published port
+        run: |
+          yq -e '(has("full_access") or has("privileged") or has("apparmor") or has("ports") or has("image") or has("homeassistant_api") or has("hassio_api")) | not' web-search/config.yaml
+
+      - name: Build image (same Dockerfile the Supervisor builds)
+        run: |
+          docker build --build-arg BUILD_VERSION="$(yq -r .version web-search/config.yaml)" -t web-search:test web-search
+          echo "::notice title=Image size::$(docker image inspect -f '{{.Size}}' web-search:test | numfmt --to=iec)"
+
+      # End to end on the runner: SearXNG answers JSON, the MCP server lists its tools, a real
+      # search returns capped text, and read_page refuses internal addresses.
+      - name: Runs end to end
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/data"
+          yq -o=json .options web-search/config.yaml > "$RUNNER_TEMP/data/options.json"
+          docker run -d --name ws -v "$RUNNER_TEMP/data:/data" web-search:test
+          for i in $(seq 1 60); do docker exec ws /opt/mcp/bin/python -c 'import socket; socket.create_connection(("127.0.0.1", 8765), 2)' 2>/dev/null && break; sleep 2; done
+          docker logs ws 2>&1 | tail -n 30
+          docker exec ws /opt/mcp/bin/python -c '
+          import httpx, json
+          r = httpx.get("http://127.0.0.1:8888/search", params={"q": "wikipedia", "format": "json"}, timeout=20)
+          r.raise_for_status(); print("searxng results:", len(r.json()["results"]))'
+          docker exec -i ws /opt/mcp/bin/python - <<'PY'
+          import asyncio
+          from mcp import ClientSession
+          from mcp.client.streamable_http import streamablehttp_client
+          async def main():
+              async with streamablehttp_client("http://127.0.0.1:8765/mcp") as (r, w, _):
+                  async with ClientSession(r, w) as s:
+                      await s.initialize()
+                      names = [t.name for t in (await s.list_tools()).tools]
+                      assert names == ["web_search", "read_page"], names
+                      out = (await s.call_tool("web_search", {"query": "capitale de la France"})).content[0].text
+                      print(out); assert 0 < len(out) <= 1500
+                      for u in ("http://127.0.0.1:8888/", "http://supervisor/core/api/states", "file:///etc/passwd"):
+                          t = (await s.call_tool("read_page", {"url": u})).content[0].text
+                          print(u, "->", t); assert t.startswith("Could not read the page"), t
+          asyncio.run(main())
+          PY
+          docker rm -f ws

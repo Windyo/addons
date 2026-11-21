@@ -1,0 +1,5 @@
+---
+configuration:
+  default_language:
+    name: Default search language
+    description: Used when a query doesn't clearly read as French or English.

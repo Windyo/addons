@@ -1,0 +1,4 @@
+# MCP server venv (separate from SearXNG's, which pins its own httpx).
+mcp==1.30.0
+httpx==0.28.1
+trafilatura==2.0.0

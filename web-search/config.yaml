@@ -1,0 +1,20 @@
+---
+name: Web Search
+version: 0.1.0
+slug: web-search
+description: >-
+  SearXNG plus a small MCP server: gives the local LLM a web_search and a read_page tool, and
+  nothing else. Internal only.
+url: https://github.com/windyo/addons/tree/master/web-search
+arch:
+  - amd64
+# No `image:` on purpose: the Supervisor builds this add-on locally from the Dockerfile.
+startup: application
+boot: manual
+# No GPU, no special rights, no `ports:` (no auth). Home Assistant's MCP integration reaches it
+# at http://8634c18d-web-search:8765/mcp.
+watchdog: tcp://[HOST]:8765
+options:
+  default_language: fr
+schema:
+  default_language: list(fr|en)
