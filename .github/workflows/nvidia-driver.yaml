@@ -1,0 +1,79 @@
+name: nvidia-driver
+
+# Check only: the Supervisor builds this add-on on the device, so nothing is pushed to GHCR.
+on:
+  push:
+    paths:
+      - "nvidia-driver/**"
+      - ".github/workflows/nvidia-driver.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (same Dockerfile the Supervisor builds)
+        run: |
+          docker build --build-arg BUILD_VERSION="$(yq -r .version nvidia-driver/config.yaml)" -t nvidia-driver:test nvidia-driver
+          echo "::notice title=Image size::$(docker image inspect -f '{{.Size}}' nvidia-driver:test | numfmt --to=iec)"
+
+      - name: Shell syntax and image contents
+        run: |
+          docker run --rm nvidia-driver:test bash -c '
+            set -e
+            for f in /usr/local/bin/*.sh; do bash -n "$f"; done
+            test "$(cat /opt/nvidia/VERSION)" = 580.196.07
+            ldconfig -p | grep libnvidia-ml.so.1
+            test -d /opt/nvidia/kernel-src
+            if find / -xdev -name "libcudnn*" | grep .; then echo "cuDNN must never ship"; exit 1; fi'
+
+      # No GPU on the runner: the add-on must still reach its monitor loop, write the consumer
+      # contract and report itself healthy.
+      - name: Runs without a GPU (state.json contract, heartbeat)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/data" "$RUNNER_TEMP/share"
+          yq -o=json .options nvidia-driver/config.yaml > "$RUNNER_TEMP/data/options.json"
+          docker run -d --name drv -v "$RUNNER_TEMP/data:/data" -v "$RUNNER_TEMP/share:/share" nvidia-driver:test
+          sleep 20
+          docker logs drv
+          docker exec drv test -n "$(docker exec drv find /tmp/heartbeat -mmin -1)"
+          docker rm -f drv
+          cat "$RUNNER_TEMP/share/nvidia/state.json"
+          jq -e '.state == "no_gpu" and (.boot_id | length) == 36 and .thermal == "ok" and .driver == "580.196.07"
+                 and (.updated | fromdateiso8601) > (now - 60)' "$RUNNER_TEMP/share/nvidia/state.json"
+
+      # The same script the add-on runs on the device, against the config read out of the
+      # official HAOS 18.3 kernel (IKCONFIG). Proves the driver builds for that exact kernel.
+      - name: Compile driver for HAOS 18.3 (6.18.52-haos)
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          docker run --rm \
+            -v "$PWD/nvidia-driver/tests:/tests:ro" -v "$RUNNER_TEMP/out:/out" \
+            nvidia-driver:test \
+            nv-build-modules.sh 6.18.52-haos /tests/haos-18.3-kernel.config /out/6.18.52-haos "$(nproc)" /usr/local/share/nvidia-driver/linux-patches \
+            2>&1 | tee "$RUNNER_TEMP/out/build.log"
+
+      - name: Check result
+        run: |
+          d="$RUNNER_TEMP/out/6.18.52-haos"
+          ls -la "$d"
+          echo "vermagic: '$(cat "$d/vermagic")'"
+          echo "config drift:"; cat "$d/config-drift.txt"
+          test "$(cat "$d/vermagic")" = "6.18.52-haos SMP preempt mod_unload "
+          docker run --rm -v "$d:/m:ro" nvidia-driver:test modinfo /m/nvidia.ko /m/nvidia-uvm.ko
+
+      - name: Report failure details
+        if: failure()
+        run: |
+          f="$RUNNER_TEMP/out/build.log"
+          [ -s "$f" ] || exit 0
+          body=$(tail -n 80 "$f" | head -c 30000 | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+          echo "::error title=build-tail::$body"

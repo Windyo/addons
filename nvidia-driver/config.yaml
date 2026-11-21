@@ -1,0 +1,45 @@
+---
+name: NVIDIA Driver
+version: 0.1.0
+slug: nvidia-driver
+description: >-
+  Builds, loads and monitors the NVIDIA driver on HAOS (Pascal / driver 580) and publishes the
+  GPU state that GPU add-ons read. The only add-on that touches the kernel.
+url: https://github.com/windyo/addons/tree/master/nvidia-driver
+arch:
+  - amd64
+# No `image:` on purpose: the Supervisor builds this add-on locally from the Dockerfile.
+# System stage: before the services stage (Whisper) and the application stage (Ollama). The
+# Supervisor waits up to 120 s for "healthy", which a cached load reaches in seconds.
+startup: system
+# Never start on boot until a reboot test has passed on this machine.
+boot: manual
+# Device rule "a *:* rwm": mknod needs the cgroup "m" right on the nvidia majors.
+full_access: true
+# CAP_SYS_MODULE + host /lib/modules (read-only) for the vermagic reference and deps.
+kernel_modules: true
+privileged:
+  - SYS_MODULE
+  - MKNOD
+  # mount the kernel's devtmpfs to create /dev/nvidia* (the add-on's /dev is read-only)
+  - SYS_ADMIN
+apparmor: false
+# /share/nvidia/state.json: the contract GPU consumers read.
+map:
+  - share:rw
+# Publishes sensor.nvidia_gpu_status.
+homeassistant_api: true
+# Reads the installed HAOS version (/os/info) to fetch that release's kernel patches.
+hassio_api: true
+options:
+  load_driver: true
+  build_jobs: 4
+  retry_after_crash: false
+  hot_c: 85
+  cool_c: 78
+schema:
+  load_driver: bool
+  build_jobs: int(1,8)
+  retry_after_crash: bool
+  hot_c: int(70,95)
+  cool_c: int(60,90)
