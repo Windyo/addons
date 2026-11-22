@@ -49,11 +49,6 @@ gpu_check() {
   if [ "$loaded" != "$NV_VERSION" ]; then
     GPU_STATE=driver_mismatch; GPU_REASON="kernel driver $loaded, userspace $NV_VERSION"; return
   fi
-  # The nodes exist host-wide, but this container may not be allowed to open them: the Supervisor
-  # grants full_access only while Protection mode is off, when the container is created.
-  if ! { : <> /dev/nvidiactl; } 2>/dev/null; then
-    GPU_STATE=gpu_unavailable; GPU_REASON="cannot open /dev/nvidiactl (Protection mode on?)"; return
-  fi
   if st=$(jq -c --arg b "$BOOT" '. + {same_boot: (.boot_id == $b),
             age: (now - (.updated | fromdateiso8601) | floor)}' "$STATE_FILE" 2>/dev/null); then
     age=$(jq -r .age <<< "$st")
@@ -62,6 +57,12 @@ gpu_check() {
       THERMAL=$(jq -r '.thermal // "ok"' <<< "$st")
       GPU_STATE=$( [ "$(jq -r .state <<< "$st")" = ready ] && echo gpu_ready || echo gpu_unavailable )
       [ "$GPU_STATE" = gpu_ready ] || GPU_REASON="driver add-on: $(jq -r .state <<< "$st")"
+      # Only when the driver says ready (opening a hung GPU can block): the nodes exist host-wide,
+      # but this container may not be allowed to open them. The Supervisor grants full_access only
+      # while Protection mode is off, when the container is created.
+      if [ "$GPU_STATE" = gpu_ready ] && ! { timeout 5 bash -c ': <> /dev/nvidiactl'; } 2>/dev/null; then
+        GPU_STATE=gpu_unavailable; GPU_REASON="cannot open /dev/nvidiactl (Protection mode on?)"
+      fi
       return
     fi
   fi

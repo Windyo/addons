@@ -82,12 +82,6 @@ def contract():
         return False, "driver not loaded", None
     if loaded != NV_VERSION:
         return False, f"driver_mismatch: kernel {loaded}, userspace {NV_VERSION}", None
-    # The nodes exist host-wide, but this container may not be allowed to open them: the Supervisor
-    # grants full_access only while Protection mode is off, when the container is created.
-    try:
-        os.close(os.open("/dev/nvidiactl", os.O_RDWR))
-    except OSError as e:
-        return False, f"cannot open /dev/nvidiactl ({e.strerror}; Protection mode on?)", None
     try:
         st = json.load(open(STATE_FILE))
         age = time.time() - datetime.strptime(st["updated"], "%Y-%m-%dT%H:%M:%SZ").replace(
@@ -98,6 +92,14 @@ def contract():
         return False, "state.json stale or from another boot", None
     if st.get("state") != "ready" or not os.path.exists("/dev/nvidia-uvm"):
         return False, f"driver add-on: {st.get('state')}", st
+    # Only when the driver says ready (opening a hung GPU can block): the nodes exist host-wide,
+    # but this container may not be allowed to open them. The Supervisor grants full_access only
+    # while Protection mode is off, when the container is created.
+    try:
+        subprocess.run(["python3", "-c", "import os; os.close(os.open('/dev/nvidiactl', os.O_RDWR))"],
+                       check=True, timeout=5, capture_output=True)
+    except (subprocess.SubprocessError, OSError):
+        return False, "cannot open /dev/nvidiactl (Protection mode on?)", st
     return True, "ready", st
 
 
