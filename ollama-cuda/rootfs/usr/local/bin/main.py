@@ -78,6 +78,12 @@ def contract():
         return False, "driver not loaded", None
     if loaded != NV_VERSION:
         return False, f"driver_mismatch: kernel {loaded}, userspace {NV_VERSION}", None
+    # The nodes exist host-wide, but this container may not be allowed to open them: the Supervisor
+    # grants full_access only while Protection mode is off, when the container is created.
+    try:
+        os.close(os.open("/dev/nvidiactl", os.O_RDWR))
+    except OSError as e:
+        return False, f"cannot open /dev/nvidiactl ({e.strerror}; Protection mode on?)", None
     try:
         st = json.load(open(STATE_FILE))
         age = time.time() - datetime.strptime(st["updated"], "%Y-%m-%dT%H:%M:%SZ").replace(

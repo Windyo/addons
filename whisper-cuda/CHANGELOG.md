@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- Fix: check that the GPU can actually be opened before using it. With Protection mode on, the
+  container may not open `/dev/nvidia*`; 0.3.0 would then pick CUDA and crash-loop. Now it serves
+  on the CPU and says why in `gpu_reason`.
+
 ## 0.3.0
 
 - Speech-to-text only. Building and loading the driver moved to the **NVIDIA Driver** add-on;

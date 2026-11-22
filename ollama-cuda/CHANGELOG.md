@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Fix: check that the GPU can actually be opened before using it (Protection mode on → keeps
+  waiting and says why, instead of failing inside Ollama).
+
 ## 0.1.0
 
 - First version: Ollama 0.40.11 (cuda_v12 runner only, no cuDNN) on the GPU the NVIDIA Driver
