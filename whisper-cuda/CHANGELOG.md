@@ -5,9 +5,8 @@
 - Fix: check that the GPU can actually be opened before using it. With Protection mode on, the
   container may not open `/dev/nvidia*`; 0.3.0 would then pick CUDA and crash-loop. Now it serves
   on the CPU and says why in `gpu_reason`.
-- Accept and ignore the options removed in 0.3.0 (`load_driver`, `build_jobs`,
-  `retry_after_crash`) so a config saved by 0.2.x no longer makes the Supervisor log a warning
-  every few seconds.
+- Remove the options dropped in 0.3.0 (`load_driver`, `build_jobs`, `retry_after_crash`) from
+  the saved config at start (once), so the Supervisor stops logging a warning every few seconds.
 
 ## 0.3.0
 

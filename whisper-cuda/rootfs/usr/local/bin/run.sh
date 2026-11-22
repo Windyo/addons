@@ -27,6 +27,17 @@ WANT=/tmp/stt.want   # device it should run on (written by the monitor, read by 
 
 log "Whisper CUDA: userspace $NV_VERSION, reading $STATE_FILE"
 
+# Options removed in 0.3.0 stay in a config saved by 0.2.x and make the Supervisor warn on every
+# options check. Save the options once without them.
+STALE='["load_driver", "build_jobs", "retry_after_crash"]'
+if [ -n "${SUPERVISOR_TOKEN:-}" ] && jq -e --argjson k "$STALE" 'keys | any(IN($k[]))' /data/options.json > /dev/null; then
+  jq -c --argjson k "$STALE" '{options: with_entries(select(.key | IN($k[]) | not))}' /data/options.json \
+    | curl -fsS -m 10 -X POST -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" -H "Content-Type: application/json" \
+        -d @- http://supervisor/addons/self/options > /dev/null \
+    && log "removed options left over from 0.2.x: $STALE" \
+    || log "WARNING: could not remove the options left over from 0.2.x"
+fi
+
 # gpu_check -> sets GPU_STATE (gpu_ready|gpu_unavailable|driver_mismatch), GPU_REASON, FRESH
 # (state.json fresh: true/false) and THERMAL (ok|hot, from state.json when fresh).
 gpu_check() {
