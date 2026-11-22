@@ -181,9 +181,18 @@ class Gate(http.server.BaseHTTPRequestHandler):
             # Re-chunk as it arrives: chat answers stream token by token.
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
-            while chunk := up.read1(65536):
-                self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
-                self.wfile.flush()
+            try:
+                while chunk := up.read1(65536):
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
+                    self.wfile.flush()
+            except (http.client.HTTPException, OSError) as e:
+                # Ollama dropped the stream mid-answer: its runner died. End this reply (no clean
+                # terminator, so the client sees a failure) and let the fault check decide.
+                self.close_connection = True
+                if gated:
+                    threading.Thread(target=check_runner, args=(f"stream cut: {type(e).__name__}",),
+                                     daemon=True).start()
+                return
             self.wfile.write(b"0\r\n\r\n")
         finally:
             conn.close()
@@ -214,6 +223,9 @@ def ollama_env():
         "OLLAMA_GPU_OVERHEAD": str(OPTS["whisper_reserve_mib"] * 1024 * 1024),
         "OLLAMA_KV_CACHE_TYPE": OPTS["kv_cache_type"],
     })
+    if OPTS.get("cuda_launch_blocking"):
+        # Diagnostic: each CUDA call waits for its kernel, so a fault names the kernel that caused it.
+        env["CUDA_LAUNCH_BLOCKING"] = "1"
     fa = OPTS["flash_attention"]
     if fa != "auto":
         env["OLLAMA_FLASH_ATTENTION"] = "1" if fa == "on" else "0"

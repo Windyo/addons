@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- Fix: when Ollama's runner died mid-answer, the proxy crashed on the half-written stream
+  (`IncompleteRead`). It now ends the reply as failed and runs the GPU fault check.
+- Diagnostic option `cuda_launch_blocking`: a GPU fault then names the kernel that caused it.
+
 ## 0.1.1
 
 - Fix: check that the GPU can actually be opened before using it (Protection mode on → keeps

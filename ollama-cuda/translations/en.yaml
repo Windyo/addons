@@ -25,3 +25,8 @@ configuration:
   benchmark_8b:
     name: Include Qwen3-8B in the benchmark
     description: Reference only; pulls about 5 GB.
+  cuda_launch_blocking:
+    name: Diagnostic - CUDA launch blocking
+    description: >-
+      Makes every CUDA call wait for its kernel so a GPU fault names the kernel that caused it.
+      Slower; for diagnosis only.
