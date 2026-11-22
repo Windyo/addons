@@ -44,3 +44,8 @@ schema:
   benchmark: bool
   benchmark_configs: str
   debug: bool
+  # Removed in 0.3.0 (the driver moved to the NVIDIA Driver add-on). Kept as optional, ignored
+  # keys so configs saved by 0.2.x don't make the Supervisor warn on every options check.
+  load_driver: bool?
+  build_jobs: int?
+  retry_after_crash: bool?
