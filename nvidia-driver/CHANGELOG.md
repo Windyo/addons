@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- `sensor.nvidia_gpu_status` carries `kernel_gpu_errors`: the last NVIDIA error lines from the kernel
+  log (Xid codes), also logged when the add-on enters `gpu_error`.
+
 ## 0.1.0
 
 - First version. The driver build and load (crash guard, vermagic check, config drift gate,

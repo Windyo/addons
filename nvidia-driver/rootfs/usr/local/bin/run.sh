@@ -151,6 +151,14 @@ if [ "$GPU_STATE" = ready ]; then
 fi
 set_state "$GPU_STATE"
 
+# kernel_gpu_lines -> JSON array of the last NVIDIA error lines in the kernel log (Xid codes say
+# what the GPU did: 13 graphics exception, 31 MMU fault, 43 channel reset, 62 microcontroller halt,
+# 79 fallen off the bus). Reading the kernel log needs CAP_SYSLOG or CAP_SYS_ADMIN (we have the latter).
+kernel_gpu_lines() {
+  dmesg 2>/dev/null | grep -E 'NVRM: (Xid|GPU at|GPU has fallen|.*fault)|nvidia.*(error|fault)' | tail -n 12 \
+    | jq -Rsc 'split("\n") | map(select(length > 0))' || echo '[]'
+}
+
 # ---- monitor: thermal policy, state.json, sensor ----------------------------------------------
 # Thermal policy (laptop GPU): hot at HOT_C or on a hardware thermal slowdown, ok again at COOL_C.
 # Consumers follow "thermal" (Whisper moves to the CPU, Ollama refuses chats). Sustained load on
@@ -188,6 +196,7 @@ while true; do
       if [ "$fails" -ge 3 ] && [ "$GPU_STATE" = ready ]; then
         GPU_STATE=gpu_error; n=0
         log "ERROR: nvidia-smi failed $fails times in a row -> gpu_error"
+        kernel_gpu_lines | jq -r '.[]' | while read -r l; do log "kernel: $l"; done
       fi
     fi
   fi
@@ -196,7 +205,8 @@ while true; do
   if [ $((n % 4)) -eq 0 ]; then   # every minute, and right after a change
     a=$(jq -n --argjson a "$ATTRS" --arg t "$THERMAL" --argjson p "$procs" --arg h "$HOT_C" --arg c "$COOL_C" \
       --argjson nb "$([ -f "$CACHE/nvidia.ko" ] && echo true || echo false)" \
-      '$a + {thermal: $t, hot_c: $h, cool_c: $c, processes: $p, next_boot_cache: $nb}')
+      --argjson k "$(kernel_gpu_lines)" \
+      '$a + {thermal: $t, hot_c: $h, cool_c: $c, processes: $p, next_boot_cache: $nb, kernel_gpu_errors: $k}')
     if [ -n "$row" ]; then
       a=$(jq -n --argjson a "$a" --arg r "$row" '($r | split(", ")) as $f
         | $a + {gpu_name: $f[0], vram_total_mib: $f[1], vram_used_mib: $f[2], temperature_c: $f[3],

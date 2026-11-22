@@ -4,6 +4,11 @@
 
 - Fix: check that the GPU can actually be opened before using it (Protection mode on → keeps
   waiting and says why, instead of failing inside Ollama).
+- GPU fault guard: the warm-up now generates one real token. A failed warm-up, a chat the runner
+  fails (HTTP 5xx, then a failed test generation) or the driver add-on's `gpu_error` puts the
+  add-on in `gpu_fault` for the rest of the boot: Ollama is stopped and chats get 503 until the
+  host reboots. On this card the job after a first fault hung the GPU (2026-10-25, 2026-11-22).
+- Chats get 503 whenever the add-on isn't ready (loading, waiting for the GPU, benchmark).
 
 ## 0.1.0
 

@@ -33,6 +33,10 @@ HOP = {"connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrad
 
 OPTS = json.load(open("/data/options.json"))
 BOOT = open("/proc/sys/kernel/random/boot_id").read().strip()
+# A GPU fault in this boot (CUDA error in the runner, or a failed test generation). After one, the
+# card is not trusted again until a host reboot: on 2026-10-25 and 2026-11-22 the job after a first
+# fault hung the GPU, and in October that ended with the whole host down.
+FAULT_FILE = "/data/gpu_fault.json"
 
 status = {"state": "starting", "thermal": "ok", "thermal_source": None, "refused_hot": 0,
           "last_chat_ms": None, "last_chat_at": None, "model": OPTS["model"]}
@@ -146,6 +150,10 @@ class Gate(http.server.BaseHTTPRequestHandler):
         # kept-alive connection.
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else None
+        if gated and status["state"] not in ("ready", "partial_offload"):
+            with lock:
+                status["refused_unavailable"] = status.get("refused_unavailable", 0) + 1
+            return self._reply(503, {"error": f"local LLM unavailable ({status['state']})"})
         if gated and status["thermal"] == "hot":
             with lock:
                 status["refused_hot"] += 1
@@ -181,6 +189,9 @@ class Gate(http.server.BaseHTTPRequestHandler):
             with lock:
                 status["last_chat_ms"] = round((time.monotonic() - t0) * 1000)
                 status["last_chat_at"] = now()
+        elif gated and up.status >= 500:
+            # Ollama answers 500 when the runner died (e.g. "CUDA error: an illegal instruction").
+            threading.Thread(target=check_runner, args=(f"chat returned HTTP {up.status}",), daemon=True).start()
 
     do_GET = do_POST = do_DELETE = do_HEAD = do_PUT = _proxy
 
@@ -251,9 +262,48 @@ def ensure_model(model):
         log(f"pull: {res.get('status')}")
 
 
+def load_fault():
+    try:
+        f = json.load(open(FAULT_FILE))
+        return f if f.get("boot_id") == BOOT else None
+    except (OSError, ValueError):
+        return None
+
+
+def gpu_fault(reason):
+    """Stop using the GPU for the rest of this boot."""
+    if load_fault():
+        return
+    f = {"boot_id": BOOT, "at": now(), "reason": reason[:500]}
+    with open(FAULT_FILE, "w") as fh:
+        json.dump(f, fh)
+    log(f"GPU FAULT: {reason}. Not using the GPU again until the host reboots.")
+    with lock:
+        status["fault"] = f
+    set_state("gpu_fault")
+    stop_ollama()
+
+
+def check_runner(why):
+    """After a failed chat: a test generation decides between a one-off error and a GPU fault."""
+    try:
+        test_generation(OPTS["model"])
+    except Exception as e:
+        gpu_fault(f"{why}; test generation failed: {e}")
+
+
+def test_generation(model):
+    """One real token: proves the runner can compute, not just load."""
+    r = api("POST", "/api/generate", {"model": model, "prompt": "Say OK.", "stream": False,
+                                      "keep_alive": -1, "options": {"num_predict": 1}}, timeout=60)
+    if not r.get("done"):
+        raise OSError(f"no complete answer: {str(r)[:200]}")
+
+
 def warm_up(model):
     t0 = time.monotonic()
     api("POST", "/api/generate", {"model": model, "keep_alive": -1}, timeout=600)
+    test_generation(model)
     ps = api("GET", "/api/ps").get("models", [])
     m = next((x for x in ps if x.get("name") == model), {})
     size, vram = m.get("size", 0), m.get("size_vram", 0)
@@ -311,11 +361,27 @@ def main():
         set_state("benchmark")
         subprocess.run([sys.executable, "/usr/local/bin/bench.py"], check=False)
 
-    # 2-3. Serve, pull, warm up, verify full offload.
+    fault = load_fault()
+    if fault:
+        log(f"GPU fault earlier in this boot ({fault['reason']}); not starting Ollama until a reboot")
+        with lock:
+            status["fault"] = fault
+        set_state("gpu_fault")
+        while True:
+            time.sleep(60)
+            publish_status()
+
+    # 2-3. Serve, pull, warm up (with one real token), verify full offload.
     set_state("loading")
     start_ollama()
     ensure_model(OPTS["model"])
-    full = warm_up(OPTS["model"])
+    try:
+        full = warm_up(OPTS["model"])
+    except Exception as e:
+        gpu_fault(f"warm-up failed: {e}")
+        while True:
+            time.sleep(60)
+            publish_status()
     set_state("ready" if full else "partial_offload")
     if not full:
         log("WARNING: the model is not fully in VRAM; answers will be slow")
@@ -324,11 +390,20 @@ def main():
     while True:
         for _ in range(12):
             time.sleep(5)
+            if status["state"] == "gpu_fault":
+                continue
+            usable, reason, st = contract()
+            if st is not None and st.get("state") == "gpu_error":
+                gpu_fault("driver add-on reports gpu_error")
+                continue
             if ollama.poll() is not None:
                 log(f"ollama serve exited ({ollama.returncode}), restarting")
                 set_state("loading")
                 start_ollama()
-                set_state("ready" if warm_up(OPTS["model"]) else "partial_offload")
+                try:
+                    set_state("ready" if warm_up(OPTS["model"]) else "partial_offload")
+                except Exception as e:
+                    gpu_fault(f"warm-up after restart failed: {e}")
         publish_status()
 
 
