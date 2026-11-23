@@ -155,8 +155,10 @@ set_state "$GPU_STATE"
 # what the GPU did: 13 graphics exception, 31 MMU fault, 43 channel reset, 62 microcontroller halt,
 # 79 fallen off the bus). Reading the kernel log needs CAP_SYSLOG or CAP_SYS_ADMIN (we have the latter).
 kernel_gpu_lines() {
-  dmesg 2>/dev/null | grep -E 'NVRM: (Xid|GPU at|GPU has fallen|.*fault)|nvidia.*(error|fault)' | tail -n 12 \
-    | jq -Rsc 'split("\n") | map(select(length > 0))' || echo '[]'
+  # No match is the normal case: grep's status must not fail the pipeline (pipefail), or the
+  # fallback below would print a second array and break every caller's --argjson.
+  { dmesg 2>/dev/null | grep -E 'NVRM: (Xid|GPU at|GPU has fallen|.*fault)|nvidia.*(error|fault)' || true; } \
+    | tail -n 12 | jq -Rsc 'split("\n") | map(select(length > 0))'
 }
 
 # ---- monitor: thermal policy, state.json, sensor ----------------------------------------------
@@ -186,9 +188,8 @@ while true; do
           log "THERMAL: GPU back to ${TEMP} C -> ok"
         fi
       fi
-      procs=$(nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null \
-        | jq -Rsc 'split("\n") | map(select(length > 0) | split(", ") | {pid: .[0], process: .[1], vram_mib: .[2]})' \
-        || echo '[]')
+      procs=$({ nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null || true; } \
+        | jq -Rsc 'split("\n") | map(select(length > 0) | split(", ") | {pid: .[0], process: .[1], vram_mib: .[2]})')
     else
       row=""
       fails=$((fails + 1))

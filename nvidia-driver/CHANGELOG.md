@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- Fix: with no NVIDIA errors in the kernel log (the normal case) `sensor.nvidia_gpu_status` lost all
+  its attributes (temperature, VRAM, processes, `kernel_gpu_errors`) and the log showed
+  `jq: invalid JSON text passed to --argjson` every minute. `state.json` was not affected.
+
 ## 0.1.1
 
 - `sensor.nvidia_gpu_status` carries `kernel_gpu_errors`: the last NVIDIA error lines from the kernel
