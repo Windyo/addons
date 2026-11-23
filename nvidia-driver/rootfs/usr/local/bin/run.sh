@@ -169,6 +169,24 @@ if [ "$GPU_STATE" = ready ]; then
     printf '%s=%s; ' "$f" "$(cat /sys/class/dmi/id/$f 2>/dev/null || echo '?')"; done)
   log "platform: $dmi"
   log "WMI GUIDs: $(ls /sys/bus/wmi/devices 2>/dev/null | tr '\n' ' ')"
+  # Gigabyte's Command & Control drives GB_WMIACPI_Get/Set (WMI methods WMBC/WMBD in the ACPI
+  # tables): Smart Turbo, Turbo Mode, fan modes. Decompile the tables and log those two methods so the
+  # command codes and EC fields this model uses are known before anything is written.
+  if [ -r /sys/firmware/acpi/tables/DSDT ]; then
+    acpi=/tmp/acpi; rm -rf "$acpi"; mkdir -p "$acpi"
+    for t in /sys/firmware/acpi/tables/DSDT /sys/firmware/acpi/tables/SSDT*; do
+      [ -r "$t" ] && cat "$t" > "$acpi/$(basename "$t").aml"
+    done
+    (cd "$acpi" && iasl -d ./*.aml > /dev/null 2>&1 || true)
+    mkdir -p /share/nvidia/acpi && cp "$acpi"/*.dsl /share/nvidia/acpi/ 2>/dev/null || true
+    for m in WMBC WMBD; do
+      awk -v m="$m" '$0 ~ "Method \\(" m "," {p=1; d=0}
+        p {f=FILENAME; sub(/.*\//, "", f); print f ": " $0; n=gsub(/\{/,"{"); c=gsub(/\}/,"}"); d+=n-c; if (d<=0 && n+c>0 && ++k) p=0; if (++lines>600) exit}' \
+        "$acpi"/*.dsl | while IFS= read -r l; do log "acpi $m: $l"; done
+    done
+  else
+    log "ACPI tables not readable"
+  fi
   log "ACPI platform_profile: $(cat /sys/firmware/acpi/platform_profile 2>/dev/null || echo none) (choices: $(cat /sys/firmware/acpi/platform_profile_choices 2>/dev/null || echo none))"
   log "temperature controls: $(nvidia-smi -q -d TEMPERATURE 2>&1 | grep -iE 'target|slowdown|shutdown|max operating' | sed 's/  */ /g' | tr '\n' ';')"
   # Clock lock test with the full supported range (no effective change), then reset. Tells whether

@@ -14,7 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Kernel + out-of-tree module build toolchain, module tools, status helpers.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        bc bison build-essential ca-certificates cpio curl flex gcc-13 jq kmod \
+        acpica-tools bc bison build-essential ca-certificates cpio curl flex gcc-13 jq kmod \
         libelf-dev libssl-dev patch perl python3 util-linux xz-utils zstd \
     && rm -rf /var/lib/apt/lists/*
 
