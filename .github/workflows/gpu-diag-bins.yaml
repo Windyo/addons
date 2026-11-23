@@ -1,0 +1,92 @@
+name: gpu-diag-bins
+
+# Builds the GPU diagnostic binaries for sm_61 (GTX 1070) once, in CI, so the HA host never compiles
+# CUDA: llama.cpp's test-backend-ops at the commit Ollama 0.40.11 vendors (b11845), gpu-burn, and
+# our VRAM test. Published as a release asset; gpu-diag/Dockerfile pins its sha256.
+on:
+  push:
+    paths:
+      - "gpu-diag/build/**"
+      - ".github/workflows/gpu-diag-bins.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    container: nvidia/cuda:12.8.1-devel-ubuntu24.04
+    env:
+      LLAMA_TAG: b11845
+      LLAMA_SHA: 9ff0d7e90f0faaa7c16017e6dcf9cf91c50a100e
+      BURN_SHA: 0d19c94dcb2e9b6858b7586a4c327674cd67113b
+    steps:
+      - name: Tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git cmake build-essential ca-certificates curl zstd
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/gh.gpg
+          echo "deb [signed-by=/usr/share/keyrings/gh.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/gh.list
+          apt-get update && apt-get install -y --no-install-recommends gh
+
+      - uses: actions/checkout@v4
+
+      - name: VRAM test
+        run: |
+          mkdir -p /out/bin
+          nvcc -O2 -gencode arch=compute_61,code=sm_61 -o /out/bin/vram_test gpu-diag/build/vram_test.cu
+
+      - name: gpu-burn
+        run: |
+          set -eux
+          git clone https://github.com/wilicc/gpu-burn /tmp/burn
+          cd /tmp/burn && git checkout "$BURN_SHA"
+          make COMPUTE=61
+          ls -la
+          cp gpu_burn compare.* /out/bin/ 2>/dev/null || true
+          test -x /out/bin/gpu_burn
+
+      - name: llama.cpp test-backend-ops (sm_61 only)
+        run: |
+          set -eux
+          git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp /tmp/llama
+          test "$(git -C /tmp/llama rev-parse HEAD)" = "$LLAMA_SHA"
+          cmake -S /tmp/llama -B /tmp/lb -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61 -DGGML_NATIVE=OFF \
+            -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_TOOLS=OFF \
+            -DLLAMA_CURL=OFF
+          cmake --build /tmp/lb --target test-backend-ops -j "$(nproc)"
+          cp "$(find /tmp/lb -name test-backend-ops -type f -perm -u+x | head -1)" /out/bin/
+
+      - name: Check binaries
+        id: pack
+        run: |
+          set -eux
+          cd /out/bin
+          for f in vram_test gpu_burn test-backend-ops; do
+            echo "== $f"; cuobjdump --list-elf "$f" | grep -oE 'sm_[0-9]+' | sort | uniq -c
+            if cuobjdump --list-elf "$f" | grep -oE 'sm_[0-9]+' | grep -vx sm_61; then echo "not sm_61 only"; exit 1; fi
+            ldd "$f" | grep -vE 'linux-vdso|ld-linux'
+          done
+          ./test-backend-ops --help 2>&1 | head -30 || true
+          # No GPU here: the VRAM test must fail cleanly with a JSON line, not crash.
+          ./vram_test 0 1 | tee /tmp/v.json || true
+          grep -q '"ok": false' /tmp/v.json
+          echo "$LLAMA_TAG $LLAMA_SHA" > /out/VERSIONS; echo "gpu-burn $BURN_SHA" >> /out/VERSIONS
+          cd /out && tar --zstd -cf /tmp/gpu-diag-bins.tar.zst bin VERSIONS
+          sha=$(sha256sum /tmp/gpu-diag-bins.tar.zst | cut -d' ' -f1)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "::notice title=bins sha256::$sha"
+          echo "::notice title=libs::$(ldd /out/bin/* | grep -oE '^\s*lib[^ ]+' | sort -u | tr -d '\t' | tr '\n' ' ')"
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          tag="gpu-diag-bins-${{ github.run_number }}"
+          gh release create "$tag" /tmp/gpu-diag-bins.tar.zst --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$tag" --notes "sm_61 diagnostic binaries. sha256 ${{ steps.pack.outputs.sha }}" --prerelease
+          echo "::notice title=release::$tag"
