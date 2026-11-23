@@ -40,7 +40,9 @@ jobs:
         working-directory: /src
         run: |
           set -eux
-          cmake -S llama/server --preset llama_cuda_v12_linux -DCMAKE_CUDA_ARCHITECTURES=61
+          # GGML_CUDA_NCCL defaults ON and this image ships NCCL; the release's build host has none,
+          # so its library doesn't link it. Match the release.
+          cmake -S llama/server --preset llama_cuda_v12_linux -DCMAKE_CUDA_ARCHITECTURES=61 -DGGML_CUDA_NCCL=OFF
           cmake --build build/llama-server-cuda_v12 -- -l "$(nproc)"
           cmake --install build/llama-server-cuda_v12 --component llama-server --strip
           find dist -maxdepth 4 | sort
@@ -56,6 +58,9 @@ jobs:
           arches=$(cuobjdump --list-elf "$lib" | grep -oE 'sm_[0-9]+a?' | sort -u | tr '\n' ' ')
           echo "::notice title=arches::$arches"
           test "$arches" = "sm_61 "
+          needed=$(objdump -p "$lib" | awk '/NEEDED/ {print $2}' | tr '\n' ' ')
+          echo "::notice title=NEEDED::$needed"
+          if echo "$needed" | grep -qE 'nccl|cudnn'; then echo "::error::links NCCL or cuDNN"; exit 1; fi
           mkdir -p /out && cp "$lib" /out/libggml-cuda.so
           echo "ollama $OLLAMA_TAG $(git rev-parse HEAD), sm_61 only" > /out/VERSION
           tar --zstd -cf /tmp/ollama-cuda-v12-sm61.tar.zst -C /out .
