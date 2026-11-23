@@ -19,6 +19,10 @@ mkdir -p "$DATA" "$LOGS" "$SHARE"
 LOAD=$(opt load_driver)
 JOBS=$(opt build_jobs)
 RETRY=$(opt retry_after_crash)
+# Extra nvidia.ko parameters (e.g. NVreg_RegistryDwords=...), used when this add-on loads the module:
+# they take effect at the next host boot, not on a driver that is already loaded.
+export NV_MODULE_PARAMS
+NV_MODULE_PARAMS=$(opt module_params)
 HOT_C=$(opt hot_c)
 COOL_C=$(opt cool_c)
 BOOT=$(cat /proc/sys/kernel/random/boot_id)
@@ -30,7 +34,7 @@ TEMP=""
 VRAM_T=""
 VRAM_U=""
 
-log "NVIDIA driver: kernel $KREL, driver $NV_VERSION, load_driver=$LOAD, thermal ${HOT_C}/${COOL_C} C"
+log "NVIDIA driver: kernel $KREL, driver $NV_VERSION, load_driver=$LOAD, thermal ${HOT_C}/${COOL_C} C, module_params='${NV_MODULE_PARAMS}'"
 
 # write_state: atomic write of the consumer contract (docs/plans/gpu-stack/plan.md §3).
 # Consumers use the GPU only if state == ready, boot_id is theirs, and updated is < 60 s old.
@@ -144,11 +148,35 @@ gpu_stage() {
   GPU_STATE=ready
 }
 
+# log_platform_state: read-only facts the GPU faults may depend on, logged at start and on gpu_error.
+# PCIe: link speed/width, ASPM, relaxed ordering/no-snoop, and the latched error bits of the GPU and
+# its root port (the HAOS kernel has no AER driver, so link errors are never reported otherwise).
+log_platform_state() {
+  local gpu l
+  gpu=$(jq -r '.pci // empty' <<< "$ATTRS")
+  [ -n "$gpu" ] && python3 /usr/local/bin/nv-pcie.py "$gpu" 2>&1 | while IFS= read -r l; do log "pcie: $l"; done
+  log "driver params: $(tr '\n' ' ' < /proc/driver/nvidia/params 2>/dev/null | sed 's/  */ /g')"
+  log "kernel cmdline: $(cat /proc/cmdline)"
+  # efifb draws the text console into the start of BAR1; the driver must keep that range mapped
+  # to the console's own memory (it does when it detects the framebuffer).
+  grep -iE 'efifb|bootfb|simple|vesa|nvidia|0000:01:00' /proc/iomem 2>/dev/null | while IFS= read -r l; do log "iomem: $l"; done
+  if [ -d "$CACHE/conftest" ]; then
+    grep -hE '^#(define|undef) NV_(SET_(MEMORY|PAGES)(_ARRAY)?_UC_PRESENT|IS_EXPORT_SYMBOL_(PRESENT|GPL)_screen_info|NUM_REGISTERED_FB_PRESENT|PGPROT_DECRYPTED|IOREMAP_WC_PRESENT|VGA_TRYGET)' \
+      "$CACHE"/conftest/*.h 2>/dev/null | sort -u | while IFS= read -r l; do log "conftest: $l"; done
+  else
+    log "conftest: not recorded (module cache built before 0.1.5)"
+  fi
+  for l in /sys/class/vtconsole/vtcon*; do
+    log "console $(basename "$l"): $(cat "$l/name" 2>/dev/null) bound=$(cat "$l/bind" 2>/dev/null)"
+  done
+}
+
 gpu_stage
 # Modules already loaded but the GPU gone (Xid 79 needs a power-off): say so now, not after 3 polls.
 if [ "$GPU_STATE" = ready ] && ! nvidia-smi -L > /dev/null 2>&1; then
   GPU_STATE=gpu_error
   log "ERROR: nvidia-smi cannot reach the GPU -> gpu_error (a full power-off is needed after Xid 79)"
+  log_platform_state
 fi
 if [ "$GPU_STATE" = ready ]; then
   # Keep the GPU initialised so the driver manages clocks and power between requests.
@@ -198,6 +226,7 @@ if [ "$GPU_STATE" = ready ]; then
   log "clock lock test -lgc ${lo},${hi}: $lgc | reset: $rgc"
   ATTRS=$(jq -n --argjson a "$ATTRS" --arg d "$dmi" --arg l "$lgc" \
     '$a + {platform: $d, clock_lock_test: $l}')
+  log_platform_state
 fi
 set_state "$GPU_STATE"
 
@@ -248,6 +277,7 @@ while true; do
         GPU_STATE=gpu_error; n=0
         log "ERROR: nvidia-smi failed $fails times in a row -> gpu_error"
         kernel_gpu_lines | jq -r '.[]' | while read -r l; do log "kernel: $l"; done
+        log_platform_state
       fi
     fi
   fi

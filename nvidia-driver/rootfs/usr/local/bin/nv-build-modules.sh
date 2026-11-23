@@ -94,6 +94,9 @@ for m in nvidia nvidia-uvm; do
   cp "$WORK/nv/${m}.ko" "$OUT/"
 done
 modinfo -F vermagic "$OUT/nvidia.ko" > "$OUT/vermagic"
+# What NVIDIA's conftest detected in this kernel (cache attributes, console detection, ...).
+mkdir -p "$OUT/conftest"
+cp "$WORK"/nv/conftest/*.h "$OUT/conftest/" 2>/dev/null || true
 echo "$NV_VERSION" > "$OUT/driver_version"
 cp "$K/.config" "$OUT/kernel.config"
 

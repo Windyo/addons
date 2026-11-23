@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.5
+
+- New option `module_params` (empty by default): extra `nvidia.ko` parameters such as
+  `NVreg_RegistryDwords=...`, used when the add-on loads the driver (so from the next host boot).
+- At start and when the GPU stops answering, logs read-only platform state: PCIe link speed/width,
+  ASPM, relaxed ordering/no-snoop and the latched error bits of the GPU and its root port (the HAOS
+  kernel has no AER driver, so link errors are otherwise invisible), the driver's module parameters,
+  the kernel command line, the console framebuffer's place in BAR1 and the console bindings.
+- A new driver build keeps NVIDIA's conftest results and the add-on logs the ones that decide memory
+  caching and console detection.
+
 ## 0.1.4
 
 - At start, logs the laptop platform (DMI model, WMI interfaces, ACPI platform profile) and the GPU

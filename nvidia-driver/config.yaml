@@ -1,6 +1,6 @@
 ---
 name: NVIDIA Driver
-version: 0.1.4
+version: 0.1.5
 slug: nvidia-driver
 description: >-
   Builds, loads and monitors the NVIDIA driver on HAOS (Pascal / driver 580) and publishes the
@@ -37,9 +37,11 @@ options:
   retry_after_crash: false
   hot_c: 85
   cool_c: 78
+  module_params: ""
 schema:
   load_driver: bool
   build_jobs: int(1,8)
   retry_after_crash: bool
   hot_c: int(70,95)
   cool_c: int(60,90)
+  module_params: match(^(NVreg_[A-Za-z0-9]+=[A-Za-z0-9_.;=]+( |$))*$)

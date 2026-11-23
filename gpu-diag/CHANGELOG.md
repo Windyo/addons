@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+- Clock timeline: NVML is sampled in-process 4 times a second (P-state, graphics and memory clocks,
+  PCIe generation and width, power, temperature, utilization, clock event reasons). Each stage's
+  result gets `clocks`: every change during the stage and the samples around the first error line;
+  the changes are also logged. Every fault so far came from idle P8 within seconds of a job starting.
+- The temperature cap reads those samples instead of starting `nvidia-smi` every 2 s (nvidia-smi
+  stays as the fallback when NVML can't be opened).
+- New option `prewarm_s` (default 0 = off): runs gpu-burn for that many seconds right before the
+  `model` stage, so llama-bench starts with the card already out of P8. A/B test for the ramp.
+
 ## 0.4.0
 
 - New option `vram_passes` (default 4): a long VRAM stream test (each pass ~50 ms; 3000 = ~3 minutes of

@@ -12,7 +12,7 @@ if grep -q '^nvidia ' /proc/modules; then
     log "ERROR: nvidia $loaded is already loaded, this image needs $NV_VERSION. Reboot the host."
     exit 10
   }
-  log "nvidia $loaded already loaded"
+  log "nvidia $loaded already loaded (module_params apply at the next boot)"
 else
   # The only check the kernel makes is an exact vermagic match. Do it ourselves first,
   # against a module that ships with this kernel.
@@ -26,8 +26,9 @@ else
     log "loading dependency $dep"
     modprobe "$dep"
   done
-  log "insmod nvidia.ko"
-  insmod "$DIR/nvidia.ko"
+  read -r -a params <<< "${NV_MODULE_PARAMS:-}"
+  log "insmod nvidia.ko ${params[*]}"
+  insmod "$DIR/nvidia.ko" "${params[@]}"
 fi
 
 if ! grep -q '^nvidia_uvm ' /proc/modules; then

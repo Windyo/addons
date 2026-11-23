@@ -1,6 +1,6 @@
 ---
 name: GPU Diagnostic
-version: 0.4.0
+version: 0.5.0
 slug: gpu-diag
 description: >-
   Throw-away test: why does llama.cpp fault the GPU? VRAM test, llama.cpp's own kernel tests
@@ -27,6 +27,7 @@ options:
   model: true
   model_tests: pp_tg
   model_env: ""
+  prewarm_s: 0
   burn_seconds: 60
   burn_mib: 2048
   reserve_mib: 1536
@@ -39,6 +40,7 @@ schema:
   model: bool
   model_tests: list(pp_tg|tg)
   model_env: match(^((GGML|CUDA)_[A-Z0-9_]+=[A-Za-z0-9_.]+( |$))*$)
+  prewarm_s: int(0,60)
   burn_seconds: int(0,600)
   burn_mib: int(256,6144)
   reserve_mib: int(256,4096)

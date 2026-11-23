@@ -17,6 +17,7 @@ Every stage needs the driver add-on `ready` before it starts; any fault ends the
 not touched again until a power cycle).
 Results: sensor.gpu_diag_status and /data/results.json.
 """
+import ctypes
 import hashlib
 import json
 import os
@@ -32,6 +33,8 @@ BIN = "/opt/diag/bin"
 OPTS = json.load(open("/data/options.json"))
 BOOT = open("/proc/sys/kernel/random/boot_id").read().strip()
 TAIL = 40
+SAMPLE_HZ = 4
+MAX_SAMPLES = SAMPLE_HZ * 900
 # unsloth's GGUF of the model Ollama runs (same architecture and quantisation).
 MODEL_URL = ("https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/"
              "Qwen3-4B-Instruct-2507-Q4_K_M.gguf")
@@ -39,6 +42,7 @@ MODEL_SHA256 = "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597
 MODEL_FILE = "/data/qwen3-4b-instruct-2507-q4_k_m.gguf"
 
 results = {"boot_id": BOOT, "started": None, "stages": {}}
+SAMPLER = None
 
 
 def log(msg):
@@ -89,13 +93,93 @@ def driver_state():
     return True, "ready"
 
 
+class Sampler:
+    """In-process NVML sampling at SAMPLE_HZ for the whole run: P-state, clocks, PCIe link, power,
+    temperature, clock event reasons. One NVML client for the run, instead of an nvidia-smi process
+    (a full NVML init) every 2 s. Every fault so far came from idle P8 within seconds of a job
+    starting; the samples show what the clocks were doing at that moment."""
+    FIELDS = ("t", "pstate", "gr_mhz", "mem_mhz", "pcie_gen", "pcie_width", "power_w", "temp_c",
+              "util_pct", "reasons")
+
+    def __init__(self):
+        self.samples, self.t0, self.lock = [], time.monotonic(), threading.Lock()
+        self.error = None
+        try:
+            nv = ctypes.CDLL("libnvidia-ml.so.1")
+            if nv.nvmlInit_v2() != 0:
+                raise OSError("nvmlInit_v2 failed")
+            self.h = ctypes.c_void_p()
+            if nv.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(self.h)) != 0:
+                raise OSError("no NVML device 0")
+            self.nv = nv
+        except OSError as e:
+            self.nv, self.error = None, str(e)
+            log(f"WARNING: NVML sampler off ({e}); temperature from nvidia-smi")
+            return
+        threading.Thread(target=self.loop, daemon=True).start()
+
+    def _u(self, fn, *args, kind=ctypes.c_uint):
+        v = kind()
+        return v.value if getattr(self.nv, fn)(self.h, *args, ctypes.byref(v)) == 0 else None
+
+    def read(self):
+        nv = self.nv
+        util = (ctypes.c_uint * 2)()
+        u = util[0] if nv.nvmlDeviceGetUtilizationRates(self.h, ctypes.byref(util)) == 0 else None
+        reasons_fn = ("nvmlDeviceGetCurrentClocksEventReasons" if hasattr(nv, "nvmlDeviceGetCurrentClocksEventReasons")
+                      else "nvmlDeviceGetCurrentClocksThrottleReasons")
+        p, w, r = (self._u("nvmlDeviceGetPerformanceState", kind=ctypes.c_int),
+                   self._u("nvmlDeviceGetPowerUsage"),
+                   self._u(reasons_fn, kind=ctypes.c_ulonglong))
+        return (round(time.monotonic() - self.t0, 2), p,
+                self._u("nvmlDeviceGetClockInfo", 0), self._u("nvmlDeviceGetClockInfo", 2),
+                self._u("nvmlDeviceGetCurrPcieLinkGeneration"), self._u("nvmlDeviceGetCurrPcieLinkWidth"),
+                None if w is None else round(w / 1000, 1), self._u("nvmlDeviceGetTemperature", 0),
+                u, None if r is None else hex(r))
+
+    def loop(self):
+        while True:
+            s = self.read()
+            with self.lock:
+                self.samples.append(s)
+                del self.samples[:-MAX_SAMPLES]
+            time.sleep(1 / SAMPLE_HZ)
+
+    def now(self):
+        return round(time.monotonic() - self.t0, 2)
+
+    def since(self, t):
+        with self.lock:
+            return [s for s in self.samples if s[0] >= t]
+
+    def temp(self):
+        with self.lock:
+            fresh = self.samples[-1] if self.samples and self.now() - self.samples[-1][0] < 2 else None
+        if fresh and fresh[7] is not None:
+            return fresh[7]
+        try:
+            out = subprocess.run(["nvidia-smi", "--format=csv,noheader,nounits", "--query-gpu=temperature.gpu"],
+                                 capture_output=True, text=True, timeout=10)
+            return int(out.stdout.strip()) if out.returncode == 0 else None
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+
+
+def changes(samples):
+    """Samples where the P-state, a clock or the PCIe link changed (plus the first and last)."""
+    out, prev = [], None
+    for s in samples:
+        key = (s[1], s[2], s[3], s[4], s[5])
+        if key != prev:
+            out.append(s)
+            prev = key
+    if samples and (not out or out[-1] is not samples[-1]):
+        out.append(samples[-1])
+    return out
+
+
 def gpu_temp():
-    try:
-        out = subprocess.run(["nvidia-smi", "--format=csv,noheader,nounits", "--query-gpu=temperature.gpu"],
-                             capture_output=True, text=True, timeout=10)
-        return int(out.stdout.strip()) if out.returncode == 0 else None
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None
+    return SAMPLER.temp()
 
 
 def run_stage(name, cmd, timeout, env=None, cwd=None):
@@ -104,6 +188,7 @@ def run_stage(name, cmd, timeout, env=None, cwd=None):
     results["stages"][name] = res
     publish(f"running {name}")
     log(f"== {name}: {res['cmd']}")
+    t_start, t_err = SAMPLER.now(), None
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
                          cwd=cwd, env={**os.environ, **(env or {})})
     tail, flagged = [], []
@@ -140,9 +225,22 @@ def run_stage(name, cmd, timeout, env=None, cwd=None):
             tail = (tail + [line])[-TAIL:]
             if "FAIL" in line or "error" in line.lower() or "illegal" in line.lower():
                 flagged = (flagged + [line])[:30]
+                if t_err is None:
+                    t_err = SAMPLER.now()
     p.wait()
     done.set()
     res.update({"rc": p.returncode, "tail": tail, "flagged": flagged, "finished": now()})
+    if SAMPLER.nv:
+        # Times are seconds since the add-on started; the stage started at t_start. A CUDA error is
+        # reported when the host next synchronises, so the fault itself is at or before t_err.
+        window = SAMPLER.since(t_start - 3)
+        res["clocks"] = {"fields": Sampler.FIELDS, "stage_start_t": t_start, "first_error_t": t_err,
+                         "changes": changes(window),
+                         "around_error": [s for s in window if t_err is not None and t_err - 4 <= s[0] <= t_err + 1]}
+        for s in res["clocks"]["changes"][:60]:
+            log(f"{name} clocks: " + " ".join(f"{k}={v}" for k, v in zip(Sampler.FIELDS, s)))
+        if t_err is not None:
+            log(f"{name}: first error line at t={t_err} (stage start t={t_start})")
     return res
 
 
@@ -205,9 +303,18 @@ def stage_model():
     # Generation (one token at a time) faulted on 2026-11-23 after pp 32/256/512 passed.
     pp = "32,256,512" if OPTS["model_tests"] == "pp_tg" else "0"
     env = dict(kv.split("=", 1) for kv in OPTS["model_env"].split())
+    if OPTS["prewarm_s"]:
+        # A/B for "the fault comes with the ramp out of idle P8": raise the clocks with gpu-burn
+        # (never faulted), then start llama-bench at once, before the card drops back to P8.
+        w = run_stage("prewarm", [f"{BIN}/gpu_burn", "-m", "512", str(OPTS["prewarm_s"])],
+                      OPTS["prewarm_s"] + 60, cwd=BIN)
+        if w["rc"] != 0 or w["aborted"]:
+            results["stages"]["model"] = {"error": f"prewarm failed: rc {w['rc']}, {w['aborted']}"}
+            return False
     r = run_stage("model", [f"{BIN}/llama-bench", "-m", MODEL_FILE, "-ngl", "99", "-fa", "0",
                             "-p", pp, "-n", "64", "-r", "1", "-o", "md"], 900, env=env)
     r["env"] = env
+    r["prewarm_s"] = OPTS["prewarm_s"]
     r["table"] = [l for l in r["tail"] if l.startswith("|")]
     return r["rc"] == 0 and not r["aborted"]
 
@@ -220,6 +327,7 @@ def stage_burn():
 
 
 def main():
+    global SAMPLER
     results["started"] = now()
     results["options"] = OPTS
     stages = [("vram", OPTS["vram"], stage_vram), ("ops", OPTS["ops"] != "skip", stage_ops),
@@ -233,6 +341,9 @@ def main():
             log(f"not starting {name}: {reason}")
             publish("not ready")
             return
+        if SAMPLER is None:   # only once the driver says the GPU answers: NVML can block on a lost GPU
+            SAMPLER = Sampler()
+            results["sampler"] = {"hz": SAMPLE_HZ, "error": SAMPLER.error}
         t = gpu_temp()
         if t is None or t > OPTS["start_temp_c"]:
             results["stopped"] = f"before {name}: GPU temperature {t} C (start at <= {OPTS['start_temp_c']} C)"

@@ -48,3 +48,4 @@ cool threshold.
 | `retry_after_crash` | `false` | Allow one more load after an attempt that never finished before a reboot. |
 | `hot_c` | `85` | GPU temperature at which consumers back off. |
 | `cool_c` | `78` | Temperature at which they return. |
+| `module_params` | `""` | Extra `nvidia.ko` parameters (space-separated `NVreg_...=value`), applied when the add-on loads the driver, i.e. after the next host reboot. |

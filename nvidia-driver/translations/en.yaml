@@ -24,3 +24,9 @@ configuration:
   cool_c:
     name: Cool threshold (°C)
     description: The GPU is reported "ok" again at or below this temperature.
+  module_params:
+    name: Module parameters
+    description: >-
+      Extra nvidia.ko parameters, space-separated, e.g.
+      NVreg_RegistryDwords=PowerMizerEnable=0x1;PerfLevelSrc=0x2222. Empty by default.
+      They apply when this add-on loads the driver, i.e. after the next host reboot.
