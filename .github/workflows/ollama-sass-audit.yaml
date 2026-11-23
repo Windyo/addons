@@ -47,25 +47,27 @@ jobs:
           set -u
           mkdir -p /tmp/x && cd /tmp/x
           cuobjdump -xelf all /tmp/o/lib/ollama/cuda_v12/libggml-cuda.so > /dev/null
-          total=0; bad=0
+          n() { echo "::notice title=$1::$2"; }
+          total=0; fail=0; warn=0
           for c in *sm_61*.cubin; do
             [ -e "$c" ] || continue
             total=$((total + 1))
-            if ! nvdisasm -c "$c" > "/tmp/x/$c.sass" 2> "/tmp/x/$c.err" || [ -s "/tmp/x/$c.err" ]; then
-              bad=$((bad + 1)); echo "BAD: $c"; head -5 "/tmp/x/$c.err"
-            fi
-            # cuobjdump also checks the ELF header's arch flag
-            cuobjdump -elf "$c" 2>/dev/null | grep -m1 -oE 'EF_CUDA_SM[0-9]+' | grep -qx EF_CUDA_SM61 \
-              || { echo "ARCH MISMATCH: $c $(cuobjdump -elf "$c" 2>/dev/null | grep -m1 -oE 'EF_CUDA_SM[0-9]+')"; bad=$((bad + 1)); }
+            nvdisasm -c "$c" > "$c.sass" 2> "$c.err"; rc=$?
+            [ "$rc" -ne 0 ] && fail=$((fail + 1))
+            [ -s "$c.err" ] && warn=$((warn + 1))
           done
-          echo "sm_61 cubins: $total, problems: $bad" | tee -a /tmp/arches.txt
-          grep -l -E '\?\?|INVALID|UNKNOWN' /tmp/x/*.sass 2>/dev/null | head | sed 's/^/suspicious: /' | tee -a /tmp/arches.txt
-          ls *.cubin | sed -E 's/.*\.(sm_[0-9]+a?)\.cubin/\1/' | sort | uniq -c | tee -a /tmp/arches.txt
+          n "cubins" "sm_61 cubins $total, nvdisasm rc!=0 $fail, stderr non-empty $warn"
+          first=$(ls *sm_61*.cubin | head -1)
+          n "arch header" "$(cuobjdump -elf "$first" 2>&1 | grep -m2 -iE 'arch|EF_CUDA' | tr -s ' ' | cut -c1-110 | tr '\n' '|')"
+          errs=$(cat *.err 2>/dev/null | sort | uniq -c | sort -rn | head -3 | tr -s ' ' | cut -c1-110)
+          [ -n "$errs" ] && echo "$errs" | while read -r l; do n "nvdisasm stderr" "$l"; done
+          # Opcodes nvdisasm could not name show up as '??' or 'INVALID'
+          bad=$(grep -lE '\?\?|INVALID|UNKNOWN' *.sass 2>/dev/null | wc -l)
+          n "undecodable" "sass files with ??/INVALID/UNKNOWN: $bad"
+          n "sass lines" "$(cat *.sass | grep -cE '^\s+/\*[0-9a-f]{4}\*/') instructions decoded"
+          ls *.cubin | sed -E 's/.*\.(sm_[0-9]+a?)\.cubin/\1/' | sort | uniq -c | tr -s ' ' | tr '\n' ' ' | cut -c1-120 | sed 's/^/::notice title=cubins per arch::/'
 
       - name: Summary
         if: always()
         run: |
           { echo '```'; cat /tmp/arches.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          # Annotations are readable through the public check-runs API (logs need a login).
-          split -l 25 /tmp/arches.txt /tmp/part.
-          for f in /tmp/part.*; do echo "::notice title=audit $(basename "$f")::$(sed 's/$/ %0A/' "$f" | tr -d '\n')"; done
