@@ -1,8 +1,8 @@
 name: gpu-diag-bins
 
 # Builds the GPU diagnostic binaries for sm_61 (GTX 1070) once, in CI, so the HA host never compiles
-# CUDA: llama.cpp's test-backend-ops at the commit Ollama 0.40.11 vendors (b11845), gpu-burn, and
-# our VRAM test. Published as a release asset; gpu-diag/Dockerfile pins its sha256.
+# CUDA: llama.cpp's test-backend-ops at the commit Ollama 0.40.11 vendors (b11845), gpu-burn,
+# llama-bench, and our VRAM test. Published as a release asset; gpu-diag/Dockerfile pins its sha256.
 on:
   push:
     paths:
@@ -48,24 +48,24 @@ jobs:
           cp gpu_burn compare.* /out/bin/ 2>/dev/null || true
           test -x /out/bin/gpu_burn
 
-      - name: llama.cpp test-backend-ops (sm_61 only)
+      - name: llama.cpp test-backend-ops + llama-bench (sm_61 only)
         run: |
           set -eux
           git clone --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp /tmp/llama
           test "$(git -C /tmp/llama rev-parse HEAD)" = "$LLAMA_SHA"
           cmake -S /tmp/llama -B /tmp/lb -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
             -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=61 -DGGML_NATIVE=OFF \
-            -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_TOOLS=OFF \
+            -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_TOOLS=ON \
             -DLLAMA_CURL=OFF
-          cmake --build /tmp/lb --target test-backend-ops -j "$(nproc)"
-          cp "$(find /tmp/lb -name test-backend-ops -type f -perm -u+x | head -1)" /out/bin/
+          cmake --build /tmp/lb --target test-backend-ops llama-bench -j "$(nproc)"
+          for b in test-backend-ops llama-bench; do cp "$(find /tmp/lb -name "$b" -type f -perm -u+x | head -1)" /out/bin/; done
 
       - name: Check binaries
         id: pack
         run: |
           set -eux
           cd /out/bin
-          for f in vram_test gpu_burn test-backend-ops; do
+          for f in vram_test gpu_burn test-backend-ops llama-bench; do
             echo "== $f"; cuobjdump --list-elf "$f" | grep -oE 'sm_[0-9]+' | sort | uniq -c
             if cuobjdump --list-elf "$f" | grep -oE 'sm_[0-9]+' | grep -vx sm_61; then echo "not sm_61 only"; exit 1; fi
             ldd "$f" | grep -vE 'linux-vdso|ld-linux'
