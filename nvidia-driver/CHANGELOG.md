@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- At start, logs the laptop platform (DMI model, WMI interfaces, ACPI platform profile) and the GPU
+  temperature targets, and tests whether `nvidia-smi -lgc` clock locking works (full supported range,
+  so no effective change, then reset). Adds `platform` and `clock_lock_test` to `sensor.nvidia_gpu_status`.
+
 ## 0.1.3
 
 - At start, logs (and adds to `sensor.nvidia_gpu_status` as `power_clock_controls` and

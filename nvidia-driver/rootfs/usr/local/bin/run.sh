@@ -158,6 +158,23 @@ if [ "$GPU_STATE" = ready ]; then
   ATTRS=$(jq -n --argjson a "$ATTRS" --arg q "$caps_q" --arg v "$caps" --arg n "$sup" \
     '$a + {power_clock_controls: ([($q | split(",")), ($v | split(", "))] | transpose | map({(.[0]): .[1]}) | add),
            supported_graphics_clocks: ($n | tonumber? // $n)}')
+  # NVML reports no power limit on this laptop GPU; vendor tools (Gigabyte Control Center) go through
+  # the laptop firmware instead. Log what the platform exposes, read-only.
+  dmi=$(for f in sys_vendor product_name product_version board_name bios_version; do
+    printf '%s=%s; ' "$f" "$(cat /sys/class/dmi/id/$f 2>/dev/null || echo '?')"; done)
+  log "platform: $dmi"
+  log "WMI GUIDs: $(ls /sys/bus/wmi/devices 2>/dev/null | tr '\n' ' ')"
+  log "ACPI platform_profile: $(cat /sys/firmware/acpi/platform_profile 2>/dev/null || echo none) (choices: $(cat /sys/firmware/acpi/platform_profile_choices 2>/dev/null || echo none))"
+  log "temperature controls: $(nvidia-smi -q -d TEMPERATURE 2>&1 | grep -iE 'target|slowdown|shutdown|max operating' | sed 's/  */ /g' | tr '\n' ';')"
+  # Clock lock test with the full supported range (no effective change), then reset. Tells whether
+  # nvidia-smi -lgc works on this card at all.
+  lo=$(nvidia-smi -q -d SUPPORTED_CLOCKS 2>/dev/null | awk '/Graphics/ {gsub(/[^0-9]/, "", $3); print $3}' | sort -n | head -1)
+  hi=$(nvidia-smi -q -d SUPPORTED_CLOCKS 2>/dev/null | awk '/Graphics/ {gsub(/[^0-9]/, "", $3); print $3}' | sort -n | tail -1)
+  lgc=$(nvidia-smi -lgc "${lo:-0},${hi:-0}" 2>&1 | tr '\n' ' ')
+  rgc=$(nvidia-smi -rgc 2>&1 | tr '\n' ' ')
+  log "clock lock test -lgc ${lo},${hi}: $lgc | reset: $rgc"
+  ATTRS=$(jq -n --argjson a "$ATTRS" --arg d "$dmi" --arg l "$lgc" \
+    '$a + {platform: $d, clock_lock_test: $l}')
 fi
 set_state "$GPU_STATE"
 
