@@ -358,9 +358,29 @@ def test_generation(model):
     log(f"test generation: {time.monotonic() - t0:.1f} s")
 
 
+def runner_env():
+    """GGML_*/CUDA_* variables of the running llama-server processes, read from /proc: proof of
+    what the runner actually got, not of what we meant to pass."""
+    found = {}
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        try:
+            if os.path.basename(os.readlink(f"/proc/{pid}/exe")) != "llama-server":
+                continue
+            env = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
+        except OSError:
+            continue
+        found[pid] = sorted(e.decode(errors="replace") for e in env
+                            if e.startswith((b"GGML_", b"CUDA_")))
+    return found
+
+
 def warm_up(model):
     t0 = time.monotonic()
     api("POST", "/api/generate", {"model": model, "keep_alive": -1}, timeout=600)
+    env = runner_env()
+    log(f"runner environment: {env or 'no llama-server process found'}")
+    with lock:
+        status["runner_env"] = next(iter(env.values()), None)
     test_generation(model)
     ps = api("GET", "/api/ps").get("models", [])
     m = next((x for x in ps if x.get("name") == model), {})

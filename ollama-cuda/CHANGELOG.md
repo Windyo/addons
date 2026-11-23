@@ -3,6 +3,8 @@
 ## 0.1.6
 
 - The start line logs launch blocking and the answer cap too.
+- After the model loads, the log and `sensor.ollama_cuda_status` (`runner_env`) show the GGML_*/CUDA_*
+  variables read from the running llama-server process itself.
 
 ## 0.1.5
 
