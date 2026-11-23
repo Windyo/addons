@@ -36,6 +36,12 @@ jobs:
             ollama --version
             ls /usr/lib/ollama
             test -d /usr/lib/ollama/cuda_v12 && test ! -e /usr/lib/ollama/cuda_v13
+            # Both ggml CUDA libraries load with the cuBLAS of the runner; main.py copies one in at start.
+            test ! -e /usr/lib/ollama/cuda_v12/libggml-cuda.so
+            for v in release sm61; do
+              cat /opt/ggml/$v/VERSION
+              if LD_LIBRARY_PATH=/usr/lib/ollama/cuda_v12:/usr/lib/ollama ldd /opt/ggml/$v/libggml-cuda.so | grep "not found"; then exit 1; fi
+            done
             ldconfig -p | grep -E "libcuda.so.1|libnvidia-ml.so.1"
             test "$(cat /opt/nvidia/VERSION)" = 580.196.07
             test ! -e /usr/bin/nvidia-modprobe

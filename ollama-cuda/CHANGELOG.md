@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- New option `cuda_library` (default `sm61`): the runner uses Ollama v0.40.11's ggml CUDA library
+  rebuilt in CI from the same source and release preset for sm_61 only. The release's library
+  (`release`) faulted the GTX 1070 on its first prompt batch (Xid 13, then off the bus).
+
 ## 0.1.2
 
 - Fix: when Ollama's runner died mid-answer, the proxy crashed on the half-written stream

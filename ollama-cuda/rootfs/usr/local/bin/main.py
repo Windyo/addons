@@ -13,6 +13,7 @@ import http.client
 import http.server
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -207,6 +208,22 @@ class Gate(http.server.BaseHTTPRequestHandler):
     do_GET = do_POST = do_DELETE = do_HEAD = do_PUT = _proxy
 
 
+def select_library():
+    """Points the cuda_v12 runner at the chosen ggml CUDA library (option cuda_library).
+    release: the one in Ollama's release (kernels for 13 GPU generations). On the GTX 1070 it hit
+    Xid 13 "Illegal Instruction Encoding" and dropped off the bus on the first prompt batch
+    (2026-11-22/23). sm61: the same source and build preset, compiled for sm_61 only, in CI."""
+    choice = OPTS["cuda_library"]
+    target = "/usr/lib/ollama/cuda_v12/libggml-cuda.so"
+    tmp = target + ".new"
+    # A copy, not a symlink: the library finds its cuBLAS next to it through $ORIGIN.
+    shutil.copyfile(f"/opt/ggml/{choice}/libggml-cuda.so", tmp)
+    os.replace(tmp, target)
+    log(f"ggml CUDA library: {choice} ({open(f'/opt/ggml/{choice}/VERSION').read().strip()})")
+    with lock:
+        status["cuda_library"] = choice
+
+
 def ollama_env():
     env = dict(os.environ)
     env.update({
@@ -347,7 +364,8 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
     log(f"Ollama CUDA: model {OPTS['model']}, ctx {OPTS['context_length']}, FA {OPTS['flash_attention']}, "
-        f"KV {OPTS['kv_cache_type']}, reserve {OPTS['whisper_reserve_mib']} MiB")
+        f"KV {OPTS['kv_cache_type']}, reserve {OPTS['whisper_reserve_mib']} MiB, "
+        f"CUDA library {OPTS['cuda_library']}")
 
     # The gate listens from the start (502 until Ollama is up), so the watchdog sees a live port.
     server = http.server.ThreadingHTTPServer(LISTEN, Gate)
@@ -370,6 +388,7 @@ def main():
         status.pop("reason", None)
 
     threading.Thread(target=thermal_watch, daemon=True).start()
+    select_library()
 
     if OPTS.get("benchmark"):
         set_state("benchmark")

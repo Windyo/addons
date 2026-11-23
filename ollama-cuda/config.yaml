@@ -1,6 +1,6 @@
 ---
 name: Ollama CUDA
-version: 0.1.2
+version: 0.1.3
 slug: ollama-cuda
 description: >-
   Local LLM (Ollama, Qwen3-4B) on an NVIDIA GPU under HAOS, for a chat-only fallback
@@ -32,6 +32,7 @@ options:
   benchmark: false
   benchmark_8b: false
   cuda_launch_blocking: false
+  cuda_library: sm61
 schema:
   model: str
   context_length: int(2048,32768)
@@ -41,3 +42,4 @@ schema:
   benchmark: bool
   benchmark_8b: bool
   cuda_launch_blocking: bool
+  cuda_library: list(sm61|release)
