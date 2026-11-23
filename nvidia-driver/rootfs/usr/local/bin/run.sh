@@ -148,6 +148,16 @@ gpu_stage
 if [ "$GPU_STATE" = ready ]; then
   # Keep the GPU initialised so the driver manages clocks and power between requests.
   nvidia-smi -pm 1 > /dev/null 2>&1 || log "WARNING: persistence mode not enabled"
+  # Read-only: which power and clock controls this card exposes ([N/A] = not adjustable). The card
+  # faults intermittently under sustained full load; a power or clock cap is the fix if one exists.
+  caps_q=power.management,power.limit,power.default_limit,power.min_limit,power.max_limit,clocks.max.sm,clocks.max.mem,clocks.default_applications.graphics,clocks.default_applications.memory
+  caps=$(nvidia-smi --query-gpu="$caps_q" --format=csv,noheader 2>&1 | head -1)
+  log "power/clock controls ($caps_q): $caps"
+  sup=$(nvidia-smi -q -d SUPPORTED_CLOCKS 2>&1 | grep -cE '^\s+Graphics\s*:' || true)
+  log "supported graphics clocks listed: $sup"
+  ATTRS=$(jq -n --argjson a "$ATTRS" --arg q "$caps_q" --arg v "$caps" --arg n "$sup" \
+    '$a + {power_clock_controls: ([($q | split(",")), ($v | split(", "))] | transpose | map({(.[0]): .[1]}) | add),
+           supported_graphics_clocks: ($n | tonumber? // $n)}')
 fi
 set_state "$GPU_STATE"
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- At start, logs (and adds to `sensor.nvidia_gpu_status` as `power_clock_controls` and
+  `supported_graphics_clocks`) which power-limit and clock controls the card exposes. Read-only.
+
 ## 0.1.2
 
 - Fix: with no NVIDIA errors in the kernel log (the normal case) `sensor.nvidia_gpu_status` lost all
