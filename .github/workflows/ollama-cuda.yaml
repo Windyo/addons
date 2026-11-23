@@ -37,10 +37,12 @@ jobs:
             ls /usr/lib/ollama
             test -d /usr/lib/ollama/cuda_v12 && test ! -e /usr/lib/ollama/cuda_v13
             # Both ggml CUDA libraries load with the cuBLAS of the runner; main.py copies one in at start.
-            test ! -e /usr/lib/ollama/cuda_v12/libggml-cuda.so
+            test ! -e /usr/lib/ollama/cuda_v12/libggml-cuda.so || { echo "::error::release library still in cuda_v12"; exit 1; }
+            echo "::notice title=lib/ollama::$(ls /usr/lib/ollama /usr/lib/ollama/cuda_v12 | tr "\n" " " | cut -c1-400)"
             for v in release sm61; do
-              cat /opt/ggml/$v/VERSION
-              if LD_LIBRARY_PATH=/usr/lib/ollama/cuda_v12:/usr/lib/ollama ldd /opt/ggml/$v/libggml-cuda.so | grep "not found"; then exit 1; fi
+              cat /opt/ggml/$v/VERSION || { echo "::error title=ggml $v::no VERSION"; exit 1; }
+              miss=$(LD_LIBRARY_PATH=/usr/lib/ollama/cuda_v12:/usr/lib/ollama ldd /opt/ggml/$v/libggml-cuda.so 2>&1 | grep -E "not found|error" | tr -s " \t" " " | tr "\n" ";")
+              if [ -n "$miss" ]; then echo "::error title=ggml $v::$miss"; exit 1; fi
             done
             ldconfig -p | grep -E "libcuda.so.1|libnvidia-ml.so.1"
             test "$(cat /opt/nvidia/VERSION)" = 580.196.07
