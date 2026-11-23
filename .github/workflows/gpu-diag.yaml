@@ -1,0 +1,52 @@
+name: gpu-diag
+
+# Check only: the Supervisor builds this add-on on the device, so nothing is pushed to GHCR.
+on:
+  push:
+    paths:
+      - "gpu-diag/**"
+      - "!gpu-diag/build/**"
+      - ".github/workflows/gpu-diag.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: A consumer gets no kernel rights, no published port
+        run: |
+          yq -e '.full_access == true' gpu-diag/config.yaml
+          yq -e '(has("kernel_modules") or has("privileged") or has("apparmor") or has("ports") or has("image")) | not' gpu-diag/config.yaml
+
+      - name: Build image (same Dockerfile the Supervisor builds)
+        run: |
+          docker build --build-arg BUILD_VERSION="$(yq -r .version gpu-diag/config.yaml)" -t gpu-diag:test gpu-diag
+          echo "::notice title=Image size::$(docker image inspect -f '{{.Size}}' gpu-diag:test | numfmt --to=iec)"
+
+      - name: Image contents
+        run: |
+          docker run --rm gpu-diag:test bash -c '
+            set -e
+            python3 -I -m py_compile /usr/local/bin/diag.py
+            for f in /opt/diag/bin/vram_test /opt/diag/bin/gpu_burn /opt/diag/bin/test-backend-ops; do
+              if ldd "$f" | tee /dev/stderr | grep -q "not found"; then echo "missing library for $f"; exit 1; fi
+            done
+            ldd /opt/diag/bin/test-backend-ops | grep -E "libcuda.so.1 => /opt/nvidia/lib/"
+            test "$(cat /opt/nvidia/VERSION)" = 580.196.07
+            if find / -xdev -name "libcudnn*" | grep .; then echo "cuDNN must never ship"; exit 1; fi
+            cat /opt/diag/VERSIONS'
+
+      # No GPU on the runner: the stages refuse to start without the driver contract.
+      - name: Refuses to run without a ready driver
+        run: |
+          mkdir -p "$RUNNER_TEMP/data"
+          yq -o=json '.options' gpu-diag/config.yaml > "$RUNNER_TEMP/data/options.json"
+          docker run --rm -v "$RUNNER_TEMP/data:/data" gpu-diag:test | tee out.log
+          grep -q "not starting vram: driver not loaded" out.log
+          jq -e '.stopped == "before vram: driver not loaded"' "$RUNNER_TEMP/data/results.json"

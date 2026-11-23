@@ -1,0 +1,18 @@
+# GPU Diagnostic
+
+A throw-away add-on that answers one question: when llama.cpp (inside Ollama) faults the GPU
+(Xid 13 "Illegal Instruction Encoding", then Xid 79 "fallen off the bus"), is it the VRAM, the
+llama.cpp kernels, the card under full load, or Ollama's build?
+
+Start it by hand with the NVIDIA Driver add-on `ready` and the GPU cool. It runs once and exits.
+
+| Stage | What | A failure means |
+|---|---|---|
+| `vram` | pattern test over free VRAM (keeps `reserve_mib` free for Whisper) | bad VRAM |
+| `ops` | llama.cpp `test-backend-ops` built for sm_61 only; `matmul` = the `MUL_MAT` cases, `all` = every op; `CUDA_LAUNCH_BLOCKING=1` | the kernels themselves fault on this card |
+| `burn` | gpu-burn: cuBLAS SGEMM at full load for `burn_seconds`, stopped at `max_temp_c` | the card faults under full load (power, heat, hardware) |
+
+All pass: the fault is specific to Ollama's prebuilt runner.
+
+After a fault the card needs a **full power-off** of the host before any GPU use; the add-on says
+so in `sensor.gpu_diag_status` (`stopped`).

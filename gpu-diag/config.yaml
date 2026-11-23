@@ -1,0 +1,38 @@
+---
+name: GPU Diagnostic
+version: 0.1.0
+slug: gpu-diag
+description: >-
+  Throw-away test: why does llama.cpp fault the GPU? VRAM test, llama.cpp's own kernel tests
+  built for sm_61, then a cuBLAS stress test. Reports sensor.gpu_diag_status.
+url: https://github.com/windyo/addons/tree/master/gpu-diag
+arch:
+  - amd64
+# No `image:` on purpose: the Supervisor builds this add-on locally. Nothing is compiled on the
+# host: the CUDA binaries come prebuilt from a release (.github/workflows/gpu-diag-bins.yaml).
+# Runs once, then exits.
+startup: application
+boot: manual
+# Device rule "a *:* rwm" (honoured only with Protection mode off): opens /dev/nvidia*.
+full_access: true
+# /share/nvidia/state.json from the NVIDIA Driver add-on.
+map:
+  - share:ro
+# Publishes sensor.gpu_diag_status.
+homeassistant_api: true
+options:
+  vram: true
+  ops: matmul
+  burn_seconds: 60
+  burn_mib: 2048
+  reserve_mib: 1536
+  start_temp_c: 60
+  max_temp_c: 85
+schema:
+  vram: bool
+  ops: list(skip|matmul|all)
+  burn_seconds: int(0,600)
+  burn_mib: int(256,6144)
+  reserve_mib: int(256,4096)
+  start_temp_c: int(40,80)
+  max_temp_c: int(70,90)
