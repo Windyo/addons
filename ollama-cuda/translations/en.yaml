@@ -40,3 +40,8 @@ configuration:
     description: >-
       llama.cpp's fused kernels for generating text. Off by default: on the GTX 1070 the first
       generated token crashed the GPU with them on.
+  max_answer_tokens:
+    name: Maximum answer length
+    description: >-
+      Tokens per answer when the client sets no limit (Home Assistant sets none). Stops a looping
+      answer from holding the GPU at full load. 400 tokens is about 300 words.

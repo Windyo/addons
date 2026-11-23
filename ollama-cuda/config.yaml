@@ -34,6 +34,7 @@ options:
   cuda_launch_blocking: false
   cuda_library: sm61
   cuda_fusion: false
+  max_answer_tokens: 400
 schema:
   model: str
   context_length: int(2048,32768)
@@ -45,3 +46,4 @@ schema:
   cuda_launch_blocking: bool
   cuda_library: list(sm61|release)
   cuda_fusion: bool
+  max_answer_tokens: int(32,4096)

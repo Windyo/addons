@@ -131,6 +131,21 @@ def thermal_watch():
         time.sleep(5)
 
 
+def cap_answer(body):
+    """Gives a chat a maximum answer length unless the client set one. A small model can loop:
+    on 2026-11-23 one benchmark answer was still generating after 5 minutes, at full GPU load."""
+    try:
+        req = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(req, dict):
+        return body
+    opts = req.setdefault("options", {})
+    if isinstance(opts, dict) and "num_predict" not in opts:
+        opts["num_predict"] = OPTS["max_answer_tokens"]
+    return json.dumps(req).encode()
+
+
 class Gate(http.server.BaseHTTPRequestHandler):
     """Streaming reverse proxy to Ollama, refusing chats while the GPU is hot."""
     protocol_version = "HTTP/1.1"
@@ -162,6 +177,10 @@ class Gate(http.server.BaseHTTPRequestHandler):
                 status["refused_hot"] += 1
             return self._reply(503, {"error": "GPU too hot, try again in a minute"})
         headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP | {"host"}}
+        if gated and body:
+            body = cap_answer(body)
+            headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
+            headers["Content-Length"] = str(len(body))
         t0 = time.monotonic()
         conn = http.client.HTTPConnection(*UPSTREAM, timeout=600)
         try:

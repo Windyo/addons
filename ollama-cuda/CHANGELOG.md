@@ -4,6 +4,8 @@
 
 - Fix: the one-token test after loading timed out at 60 s with `cuda_launch_blocking` on (the first
   token after a cold load is slow); now 300 s, and its duration is logged.
+- New option `max_answer_tokens` (default 400): chats without their own `num_predict` get this cap
+  (the benchmark too). One benchmark answer was still generating after 5 minutes at full GPU load.
 
 ## 0.1.4
 

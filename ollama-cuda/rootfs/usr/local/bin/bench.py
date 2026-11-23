@@ -86,6 +86,7 @@ def run_config(name, model, fa, kv, ctx):
             t0 = time.monotonic()
             r = m.api("POST", "/api/chat", {
                 "model": model, "stream": False, "keep_alive": -1,
+                "options": {"num_predict": m.OPTS["max_answer_tokens"]},
                 "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}],
             }, timeout=300)
             wall = time.monotonic() - t0
