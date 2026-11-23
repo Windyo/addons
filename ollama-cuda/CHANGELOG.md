@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- New option `cuda_fusion` (default off: sets `GGML_CUDA_DISABLE_FUSION=1`). With llama.cpp's own
+  sm_61 build the real model processed prompts fine but the first generated token faulted the GPU
+  (Xid 13, Xid 31 MMU read fault); fusion is only used on that path.
+
 ## 0.1.3
 
 - New option `cuda_library` (default `sm61`): the runner uses Ollama v0.40.11's ggml CUDA library

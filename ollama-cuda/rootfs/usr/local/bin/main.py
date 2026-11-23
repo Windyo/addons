@@ -240,6 +240,11 @@ def ollama_env():
         "OLLAMA_GPU_OVERHEAD": str(OPTS["whisper_reserve_mib"] * 1024 * 1024),
         "OLLAMA_KV_CACHE_TYPE": OPTS["kv_cache_type"],
     })
+    if not OPTS["cuda_fusion"]:
+        # llama.cpp's fused CUDA kernels (several ops in one launch, used when generating one token
+        # at a time). On the GTX 1070 the first generated token faulted (2026-11-23: Xid 13 + Xid 31
+        # MMU read fault) while prompt processing passed.
+        env["GGML_CUDA_DISABLE_FUSION"] = "1"
     if OPTS.get("cuda_launch_blocking"):
         # Diagnostic: each CUDA call waits for its kernel, so a fault names the kernel that caused it.
         env["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -365,7 +370,7 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     log(f"Ollama CUDA: model {OPTS['model']}, ctx {OPTS['context_length']}, FA {OPTS['flash_attention']}, "
         f"KV {OPTS['kv_cache_type']}, reserve {OPTS['whisper_reserve_mib']} MiB, "
-        f"CUDA library {OPTS['cuda_library']}")
+        f"CUDA library {OPTS['cuda_library']}, fusion {'on' if OPTS['cuda_fusion'] else 'off'}")
 
     # The gate listens from the start (502 until Ollama is up), so the watchdog sees a live port.
     server = http.server.ThreadingHTTPServer(LISTEN, Gate)

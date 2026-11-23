@@ -6,7 +6,8 @@ Runs once per start, stopping at the first failure, in order of risk:
 2. ops   - llama.cpp test-backend-ops (b11845, built for sm_61 only by us) on CUDA0, compared with
            the CPU, CUDA_LAUNCH_BLOCKING=1 so a fault names its test. Small tensors, short kernels.
 3. model - llama-bench (same build) on the real Qwen3-4B Q4_K_M: prompt processing at 32/256/512
-           tokens (Ollama faulted on its first 256-token batch), then 32 generated tokens.
+           tokens (`model_tests: pp_tg`), then 64 generated tokens; `model_env` adds variables such
+           as GGML_CUDA_DISABLE_FUSION=1.
 4. burn  - gpu-burn (cuBLAS SGEMM at full load) for `burn_seconds`, with a temperature cap.
 Reading it: vram fails -> VRAM; ops fault -> the kernels themselves (our build too), not Ollama's
 packaging; model faults -> the real workload (shapes, load pattern); burn faults -> power/hardware
@@ -200,8 +201,12 @@ def stage_model():
         results["stages"]["model"] = {"error": err}
         log(err)
         return False
+    # Generation (one token at a time) faulted on 2026-11-23 after pp 32/256/512 passed.
+    pp = "32,256,512" if OPTS["model_tests"] == "pp_tg" else "0"
+    env = dict(kv.split("=", 1) for kv in OPTS["model_env"].split())
     r = run_stage("model", [f"{BIN}/llama-bench", "-m", MODEL_FILE, "-ngl", "99", "-fa", "0",
-                            "-p", "32,256,512", "-n", "32", "-r", "1", "-o", "md"], 900)
+                            "-p", pp, "-n", "64", "-r", "1", "-o", "md"], 900, env=env)
+    r["env"] = env
     r["table"] = [l for l in r["tail"] if l.startswith("|")]
     return r["rc"] == 0 and not r["aborted"]
 

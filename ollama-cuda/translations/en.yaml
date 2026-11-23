@@ -35,3 +35,8 @@ configuration:
     description: >-
       sm61 (default): Ollama's GPU kernels rebuilt from the same source for the GTX 10xx (sm_61)
       only. release: the library shipped in Ollama's release, which crashed this card's GPU.
+  cuda_fusion:
+    name: Fused GPU kernels
+    description: >-
+      llama.cpp's fused kernels for generating text. Off by default: on the GTX 1070 the first
+      generated token crashed the GPU with them on.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- `model` stage: 64 generated tokens (was 32); `model_tests: tg` skips prompt processing;
+  `model_env` passes llama.cpp/CUDA variables to llama-bench (e.g. `GGML_CUDA_DISABLE_FUSION=1`).
+  On 2026-11-23 prompt processing passed and the first generated token faulted (Xid 13 + Xid 31).
+
 ## 0.2.0
 
 - New `model` stage (before `burn`): llama-bench on the real Qwen3-4B Q4_K_M (downloaded once, sha256
