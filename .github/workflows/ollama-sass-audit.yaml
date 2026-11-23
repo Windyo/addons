@@ -66,3 +66,6 @@ jobs:
         if: always()
         run: |
           { echo '```'; cat /tmp/arches.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # Annotations are readable through the public check-runs API (logs need a login).
+          split -l 25 /tmp/arches.txt /tmp/part.
+          for f in /tmp/part.*; do echo "::notice title=audit $(basename "$f")::$(sed 's/$/ %0A/' "$f" | tr -d '\n')"; done
