@@ -33,8 +33,8 @@ RUN set -eux; \
 
 # The same library rebuilt in CI from Ollama's source and release preset, for sm_61 only
 # (.github/workflows/ollama-runner-sm61.yaml). The release's one faulted the GTX 1070 (Xid 13).
-ARG SM61_RELEASE=ollama-cuda-v12-sm61-1
-ARG SM61_SHA256=6aafcb7fa81ac6f479b33eb04702e948e0dfbd2296b31364c6443b1ce4705c26
+ARG SM61_RELEASE=ollama-cuda-v12-sm61-2
+ARG SM61_SHA256=8ed85e0ed194a8dafb4b0da5ee0b93b772dc385e91a6f2095d4491665e96908b
 RUN set -eux; \
     curl -fsSLo /tmp/sm61.tar.zst "https://github.com/windyo/addons/releases/download/${SM61_RELEASE}/ollama-cuda-v12-sm61.tar.zst"; \
     echo "${SM61_SHA256}  /tmp/sm61.tar.zst" | sha256sum -c -; \
