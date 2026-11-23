@@ -145,6 +145,11 @@ gpu_stage() {
 }
 
 gpu_stage
+# Modules already loaded but the GPU gone (Xid 79 needs a power-off): say so now, not after 3 polls.
+if [ "$GPU_STATE" = ready ] && ! nvidia-smi -L > /dev/null 2>&1; then
+  GPU_STATE=gpu_error
+  log "ERROR: nvidia-smi cannot reach the GPU -> gpu_error (a full power-off is needed after Xid 79)"
+fi
 if [ "$GPU_STATE" = ready ]; then
   # Keep the GPU initialised so the driver manages clocks and power between requests.
   nvidia-smi -pm 1 > /dev/null 2>&1 || log "WARNING: persistence mode not enabled"

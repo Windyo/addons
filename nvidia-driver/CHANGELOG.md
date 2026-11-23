@@ -5,6 +5,8 @@
 - At start, logs the laptop platform (DMI model, WMI interfaces, ACPI platform profile) and the GPU
   temperature targets, and tests whether `nvidia-smi -lgc` clock locking works (full supported range,
   so no effective change, then reset). Adds `platform` and `clock_lock_test` to `sensor.nvidia_gpu_status`.
+- Fix: restarted after the GPU fell off the bus, the add-on reported `ready` for ~45 s. It now checks
+  the GPU answers and starts in `gpu_error` if not.
 
 ## 0.1.3
 
