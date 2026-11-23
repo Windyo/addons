@@ -1,0 +1,75 @@
+name: ollama-runner-sm61
+
+# Ollama v0.40.11's own llama-server CUDA 12 runner, built exactly like the release
+# (preset llama_cuda_v12_linux, CUDA 12.8) but for sm_61 only. Candidate replacement for the
+# release's lib/ollama/cuda_v12 on the GTX 1070 (Xid 13 on the first prompt batch, 2026-11-22/23).
+# Published as a release asset; ollama-cuda/Dockerfile pins its sha256.
+on:
+  push:
+    paths:
+      - ".github/workflows/ollama-runner-sm61.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    container: nvidia/cuda:12.8.1-devel-ubuntu24.04
+    env:
+      OLLAMA_TAG: v0.40.11
+    steps:
+      - name: Tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git cmake ninja-build build-essential ca-certificates curl zstd
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/gh.gpg
+          echo "deb [signed-by=/usr/share/keyrings/gh.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/gh.list
+          apt-get update && apt-get install -y --no-install-recommends gh
+          cmake --version | head -1
+
+      - name: Ollama source
+        run: |
+          git clone --depth 1 --branch "$OLLAMA_TAG" https://github.com/ollama/ollama /src
+          echo "::notice title=ollama commit::$(git -C /src rev-parse HEAD) llama.cpp $(cat /src/LLAMA_CPP_VERSION)"
+          grep -n -A12 '"llama_cuda_v12_linux"' /src/llama/server/CMakePresets.json | cut -c1-160
+
+      - name: Build (release preset, sm_61 only)
+        working-directory: /src
+        run: |
+          set -eux
+          cmake -S llama/server --preset llama_cuda_v12_linux -DCMAKE_CUDA_ARCHITECTURES=61
+          cmake --build build/llama-server-cuda_v12 -- -l "$(nproc)"
+          cmake --install build/llama-server-cuda_v12 --component llama-server --strip
+          find dist -maxdepth 4 | sort
+
+      - name: Check and pack
+        id: pack
+        working-directory: /src
+        run: |
+          set -eux
+          lib=$(find dist -name 'libggml-cuda.so*' -type f | head -1)
+          test -n "$lib"
+          echo "::notice title=libggml-cuda::$lib $(du -h "$lib" | cut -f1)"
+          arches=$(cuobjdump --list-elf "$lib" | grep -oE 'sm_[0-9]+a?' | sort -u | tr '\n' ' ')
+          echo "::notice title=arches::$arches"
+          test "$arches" = "sm_61 "
+          mkdir -p /out && cp "$lib" /out/libggml-cuda.so
+          echo "ollama $OLLAMA_TAG $(git rev-parse HEAD), sm_61 only" > /out/VERSION
+          tar --zstd -cf /tmp/ollama-cuda-v12-sm61.tar.zst -C /out .
+          sha=$(sha256sum /tmp/ollama-cuda-v12-sm61.tar.zst | cut -d' ' -f1)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "::notice title=sha256::$sha"
+          echo "::notice title=dist files::$(find dist -type f | sed 's|.*/lib/ollama/||' | tr '\n' ' ' | cut -c1-400)"
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          tag="ollama-cuda-v12-sm61-${{ github.run_number }}"
+          gh release create "$tag" /tmp/ollama-cuda-v12-sm61.tar.zst --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$tag" --notes "Ollama ${OLLAMA_TAG} libggml-cuda.so (CUDA 12.8), sm_61 only. sha256 ${{ steps.pack.outputs.sha }}" --prerelease
+          echo "::notice title=release::$tag"
