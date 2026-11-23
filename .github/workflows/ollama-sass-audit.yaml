@@ -1,0 +1,68 @@
+name: ollama-sass-audit
+
+# Diagnostic (2026-11-23): Ollama's cuda_v12 runner hits Xid 13 "Illegal Instruction Encoding" on a
+# GTX 1070 (sm_61) at its first prompt batch. Does the shipped GPU code for sm_61 decode cleanly?
+# Lists the architectures in every cuda_v12 library and disassembles every sm_61 cubin.
+on:
+  push:
+    paths:
+      - ".github/workflows/ollama-sass-audit.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container: nvidia/cuda:12.8.1-devel-ubuntu24.04
+    env:
+      OLLAMA_VERSION: 0.40.11
+      OLLAMA_SHA256: 7bedab90dd122661be78798e9f0edf37fccf0cccf2699d2c58ea1a3afdc04b6d
+    steps:
+      - name: Fetch Ollama (same pinned archive as the add-on)
+        run: |
+          set -eux
+          apt-get update && apt-get install -y --no-install-recommends curl zstd binutils ca-certificates
+          cd /tmp
+          curl -fsSLo ollama.tar.zst "https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}/ollama-linux-amd64.tar.zst"
+          echo "${OLLAMA_SHA256}  ollama.tar.zst" | sha256sum -c -
+          mkdir o && tar --zstd -xf ollama.tar.zst -C o
+          ls -la o/lib/ollama/cuda_v12
+
+      - name: Architectures per library
+        run: |
+          cd /tmp/o/lib/ollama/cuda_v12
+          for f in *.so*; do
+            [ -L "$f" ] && continue
+            echo "== $f"
+            cuobjdump --list-elf "$f" 2>&1 | grep -oE 'sm_[0-9]+a?' | sort | uniq -c || true
+            cuobjdump --list-ptx "$f" 2>&1 | grep -oE 'sm_[0-9]+a?' | sort | uniq -c | sed 's/^/  ptx /' || true
+          done | tee /tmp/arches.txt
+          strings libggml-cuda.so | grep -iE 'cuda (compilation|version)|nvcc|V12\.[0-9]+\.[0-9]+' | sort -u | head -20 | tee -a /tmp/arches.txt
+
+      - name: Disassemble every sm_61 cubin in libggml-cuda.so
+        run: |
+          set -u
+          mkdir -p /tmp/x && cd /tmp/x
+          cuobjdump -xelf all /tmp/o/lib/ollama/cuda_v12/libggml-cuda.so > /dev/null
+          total=0; bad=0
+          for c in *sm_61*.cubin; do
+            [ -e "$c" ] || continue
+            total=$((total + 1))
+            if ! nvdisasm -c "$c" > "/tmp/x/$c.sass" 2> "/tmp/x/$c.err" || [ -s "/tmp/x/$c.err" ]; then
+              bad=$((bad + 1)); echo "BAD: $c"; head -5 "/tmp/x/$c.err"
+            fi
+            # cuobjdump also checks the ELF header's arch flag
+            cuobjdump -elf "$c" 2>/dev/null | grep -m1 -oE 'EF_CUDA_SM[0-9]+' | grep -qx EF_CUDA_SM61 \
+              || { echo "ARCH MISMATCH: $c $(cuobjdump -elf "$c" 2>/dev/null | grep -m1 -oE 'EF_CUDA_SM[0-9]+')"; bad=$((bad + 1)); }
+          done
+          echo "sm_61 cubins: $total, problems: $bad" | tee -a /tmp/arches.txt
+          grep -l -E '\?\?|INVALID|UNKNOWN' /tmp/x/*.sass 2>/dev/null | head | sed 's/^/suspicious: /' | tee -a /tmp/arches.txt
+          ls *.cubin | sed -E 's/.*\.(sm_[0-9]+a?)\.cubin/\1/' | sort | uniq -c | tee -a /tmp/arches.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          { echo '```'; cat /tmp/arches.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
