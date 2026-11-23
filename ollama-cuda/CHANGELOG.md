@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- The start line logs launch blocking and the answer cap too.
+
 ## 0.1.5
 
 - Fix: the one-token test after loading timed out at 60 s with `cuda_launch_blocking` on (the first

@@ -392,7 +392,9 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     log(f"Ollama CUDA: model {OPTS['model']}, ctx {OPTS['context_length']}, FA {OPTS['flash_attention']}, "
         f"KV {OPTS['kv_cache_type']}, reserve {OPTS['whisper_reserve_mib']} MiB, "
-        f"CUDA library {OPTS['cuda_library']}, fusion {'on' if OPTS['cuda_fusion'] else 'off'}")
+        f"CUDA library {OPTS['cuda_library']}, fusion {'on' if OPTS['cuda_fusion'] else 'off'}, "
+        f"launch blocking {'on' if OPTS.get('cuda_launch_blocking') else 'off'}, "
+        f"answer cap {OPTS['max_answer_tokens']}")
 
     # The gate listens from the start (502 until Ollama is up), so the watchdog sees a live port.
     server = http.server.ThreadingHTTPServer(LISTEN, Gate)

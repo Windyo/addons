@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- New option `vram_passes` (default 4): a long VRAM stream test (each pass ~50 ms; 3000 = ~3 minutes of
+  full memory bandwidth). Token generation, which is memory-bound, faulted intermittently even with
+  launch blocking, while compute-bound loads always passed.
+
 ## 0.3.0
 
 - `model` stage: 64 generated tokens (was 32); `model_tests: tg` skips prompt processing;

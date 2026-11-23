@@ -2,7 +2,8 @@
 """GPU diagnostic add-on: why does llama.cpp fault this card (Xid 13, then Xid 79)?
 
 Runs once per start, stopping at the first failure, in order of risk:
-1. vram  - pattern test over free VRAM (memory-bound, low SM load).
+1. vram  - pattern test over free VRAM (memory-bound, low SM load); `vram_passes` sets how long
+           it streams (each pass writes and reads every tested byte).
 2. ops   - llama.cpp test-backend-ops (b11845, built for sm_61 only by us) on CUDA0, compared with
            the CPU, CUDA_LAUNCH_BLOCKING=1 so a fault names its test. Small tensors, short kernels.
 3. model - llama-bench (same build) on the real Qwen3-4B Q4_K_M: prompt processing at 32/256/512
@@ -156,7 +157,7 @@ def after_stage(name):
 
 
 def stage_vram():
-    r = run_stage("vram", [f"{BIN}/vram_test", str(OPTS["reserve_mib"]), "4"], 600)
+    r = run_stage("vram", [f"{BIN}/vram_test", str(OPTS["reserve_mib"]), str(OPTS["vram_passes"])], 3600)
     try:
         last = r["tail"][-1]   # a CUDA error's JSON can follow a half-printed result line
         r["result"] = json.loads(last[last.rfind('{"'):])

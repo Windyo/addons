@@ -8,7 +8,7 @@ Start it by hand with the NVIDIA Driver add-on `ready` and the GPU cool. It runs
 
 | Stage | What | A failure means |
 |---|---|---|
-| `vram` | pattern test over free VRAM (keeps `reserve_mib` free for Whisper) | bad VRAM |
+| `vram` | pattern test over free VRAM (keeps `reserve_mib` free for Whisper); `vram_passes` sets the length, e.g. 3000 for about 3 minutes of full memory bandwidth | bad VRAM |
 | `ops` | llama.cpp `test-backend-ops` built for sm_61 only; `matmul` = the `MUL_MAT` cases, `all` = every op; `CUDA_LAUNCH_BLOCKING=1` | the kernels themselves fault on this card |
 | `model` | llama-bench (same build) on the real Qwen3-4B Q4_K_M, downloaded once (2.5 GB): prompt batches of 32/256/512 tokens (`model_tests: pp_tg`), 64 generated tokens; `model_env` adds variables (e.g. `GGML_CUDA_DISABLE_FUSION=1`) | the real workload faults the card even with our build |
 | `burn` | gpu-burn: cuBLAS SGEMM at full load for `burn_seconds`, stopped at `max_temp_c` | the card faults under full load (power, heat, hardware) |

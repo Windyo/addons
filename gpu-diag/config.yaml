@@ -1,6 +1,6 @@
 ---
 name: GPU Diagnostic
-version: 0.3.0
+version: 0.4.0
 slug: gpu-diag
 description: >-
   Throw-away test: why does llama.cpp fault the GPU? VRAM test, llama.cpp's own kernel tests
@@ -22,6 +22,7 @@ map:
 homeassistant_api: true
 options:
   vram: true
+  vram_passes: 4
   ops: matmul
   model: true
   model_tests: pp_tg
@@ -33,6 +34,7 @@ options:
   max_temp_c: 85
 schema:
   vram: bool
+  vram_passes: int(2,20000)
   ops: list(skip|matmul|all)
   model: bool
   model_tests: list(pp_tg|tg)

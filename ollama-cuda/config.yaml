@@ -1,6 +1,6 @@
 ---
 name: Ollama CUDA
-version: 0.1.5
+version: 0.1.6
 slug: ollama-cuda
 description: >-
   Local LLM (Ollama, Qwen3-4B) on an NVIDIA GPU under HAOS, for a chat-only fallback
