@@ -329,11 +329,14 @@ def check_runner(why):
 
 
 def test_generation(model):
-    """One real token: proves the runner can compute, not just load."""
+    """One real token: proves the runner can compute, not just load.
+    The first token after a cold load took over 60 s with cuda_launch_blocking (2026-11-23)."""
+    t0 = time.monotonic()
     r = api("POST", "/api/generate", {"model": model, "prompt": "Say OK.", "stream": False,
-                                      "keep_alive": -1, "options": {"num_predict": 1}}, timeout=60)
+                                      "keep_alive": -1, "options": {"num_predict": 1}}, timeout=300)
     if not r.get("done"):
         raise OSError(f"no complete answer: {str(r)[:200]}")
+    log(f"test generation: {time.monotonic() - t0:.1f} s")
 
 
 def warm_up(model):

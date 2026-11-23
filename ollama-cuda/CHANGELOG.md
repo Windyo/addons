@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- Fix: the one-token test after loading timed out at 60 s with `cuda_launch_blocking` on (the first
+  token after a cold load is slow); now 300 s, and its duration is logged.
+
 ## 0.1.4
 
 - New option `cuda_fusion` (default off: sets `GGML_CUDA_DISABLE_FUSION=1`). With llama.cpp's own
