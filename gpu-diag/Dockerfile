@@ -6,8 +6,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl zstd \
     && rm -rf /var/lib/apt/lists/*
 
-ARG BINS_RELEASE=gpu-diag-bins-1
-ARG BINS_SHA256=e24f7db1ef21377d5ba4cec6848af16b595d68e1dcf011668232a3c84a822852
+ARG BINS_RELEASE=gpu-diag-bins-3
+ARG BINS_SHA256=d602ee75b24a2a4ca8fe8309ffa8ef8d6e1216a6db6b1cc5e9743e51d34a13e4
 RUN set -eux; \
     curl -fsSLo /tmp/bins.tar.zst "https://github.com/windyo/addons/releases/download/${BINS_RELEASE}/gpu-diag-bins.tar.zst"; \
     echo "${BINS_SHA256}  /tmp/bins.tar.zst" | sha256sum -c -; \

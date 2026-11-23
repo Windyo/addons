@@ -5,13 +5,17 @@ Runs once per start, stopping at the first failure, in order of risk:
 1. vram  - pattern test over free VRAM (memory-bound, low SM load).
 2. ops   - llama.cpp test-backend-ops (b11845, built for sm_61 only by us) on CUDA0, compared with
            the CPU, CUDA_LAUNCH_BLOCKING=1 so a fault names its test. Small tensors, short kernels.
-3. burn  - gpu-burn (cuBLAS SGEMM at full load) for `burn_seconds`, with a temperature cap.
+3. model - llama-bench (same build) on the real Qwen3-4B Q4_K_M: prompt processing at 32/256/512
+           tokens (Ollama faulted on its first 256-token batch), then 32 generated tokens.
+4. burn  - gpu-burn (cuBLAS SGEMM at full load) for `burn_seconds`, with a temperature cap.
 Reading it: vram fails -> VRAM; ops fault -> the kernels themselves (our build too), not Ollama's
-packaging; ops pass but burn faults -> power/hardware under full load; all pass -> Ollama's build.
+packaging; model faults -> the real workload (shapes, load pattern); burn faults -> power/hardware
+under sustained full load; all pass -> Ollama's build.
 Every stage needs the driver add-on `ready` before it starts; any fault ends the run (the card is
 not touched again until a power cycle).
 Results: sensor.gpu_diag_status and /data/results.json.
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -26,6 +30,11 @@ BIN = "/opt/diag/bin"
 OPTS = json.load(open("/data/options.json"))
 BOOT = open("/proc/sys/kernel/random/boot_id").read().strip()
 TAIL = 40
+# unsloth's GGUF of the model Ollama runs (same architecture and quantisation).
+MODEL_URL = ("https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/"
+             "Qwen3-4B-Instruct-2507-Q4_K_M.gguf")
+MODEL_SHA256 = "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+MODEL_FILE = "/data/qwen3-4b-instruct-2507-q4_k_m.gguf"
 
 results = {"boot_id": BOOT, "started": None, "stages": {}}
 
@@ -164,6 +173,39 @@ def stage_ops():
     return r["rc"] == 0 and not r["aborted"]
 
 
+def fetch_model():
+    """Downloads the GGUF once, checked against its sha256. -> error text or None."""
+    if os.path.exists(MODEL_FILE):
+        return None
+    log(f"downloading {MODEL_URL} (2.5 GB, once)")
+    publish("downloading model")
+    h, part = hashlib.sha256(), MODEL_FILE + ".part"
+    try:
+        with urllib.request.urlopen(MODEL_URL, timeout=60) as r, open(part, "wb") as f:
+            while chunk := r.read(1 << 20):
+                h.update(chunk)
+                f.write(chunk)
+    except OSError as e:
+        return f"download failed: {e}"
+    if h.hexdigest() != MODEL_SHA256:
+        os.remove(part)
+        return f"model sha256 mismatch: {h.hexdigest()}"
+    os.rename(part, MODEL_FILE)
+    return None
+
+
+def stage_model():
+    err = fetch_model()
+    if err:
+        results["stages"]["model"] = {"error": err}
+        log(err)
+        return False
+    r = run_stage("model", [f"{BIN}/llama-bench", "-m", MODEL_FILE, "-ngl", "99", "-fa", "0",
+                            "-p", "32,256,512", "-n", "32", "-r", "1", "-o", "md"], 900)
+    r["table"] = [l for l in r["tail"] if l.startswith("|")]
+    return r["rc"] == 0 and not r["aborted"]
+
+
 def stage_burn():
     r = run_stage("burn", [f"{BIN}/gpu_burn", "-m", str(OPTS["burn_mib"]), str(OPTS["burn_seconds"])],
                   OPTS["burn_seconds"] + 120, cwd=BIN)
@@ -175,7 +217,7 @@ def main():
     results["started"] = now()
     results["options"] = OPTS
     stages = [("vram", OPTS["vram"], stage_vram), ("ops", OPTS["ops"] != "skip", stage_ops),
-              ("burn", OPTS["burn_seconds"] > 0, stage_burn)]
+              ("model", OPTS["model"], stage_model), ("burn", OPTS["burn_seconds"] > 0, stage_burn)]
     for name, enabled, fn in stages:
         if not enabled:
             continue

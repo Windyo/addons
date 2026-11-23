@@ -34,7 +34,7 @@ jobs:
           docker run --rm gpu-diag:test bash -c '
             set -e
             python3 -I -m py_compile /usr/local/bin/diag.py
-            for f in /opt/diag/bin/vram_test /opt/diag/bin/gpu_burn /opt/diag/bin/test-backend-ops; do
+            for f in /opt/diag/bin/vram_test /opt/diag/bin/gpu_burn /opt/diag/bin/test-backend-ops /opt/diag/bin/llama-bench; do
               if ldd "$f" | tee /dev/stderr | grep -q "not found"; then echo "missing library for $f"; exit 1; fi
             done
             ldd /opt/diag/bin/test-backend-ops | grep -E "libcuda.so.1 => /opt/nvidia/lib/"

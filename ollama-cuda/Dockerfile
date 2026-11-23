@@ -25,7 +25,24 @@ RUN set -eux; \
     rm -rf cuda_v13 vulkan* mlx* rocm*; \
     test -d cuda_v12; \
     if find /opt/ollama -name 'libcudnn*' | grep .; then echo "cuDNN must never ship"; exit 1; fi; \
-    for f in cuda_v12/*.so*; do ! objdump -p "$f" 2>/dev/null | grep -i 'NEEDED.*cudnn'; done
+    for f in cuda_v12/*.so*; do ! objdump -p "$f" 2>/dev/null | grep -i 'NEEDED.*cudnn'; done; \
+    # The release's ggml CUDA library moves aside; main.py links the one chosen by `cuda_library`.
+    mkdir -p /opt/ggml/release; \
+    mv cuda_v12/libggml-cuda.so /opt/ggml/release/; \
+    echo "Ollama ${OLLAMA_VERSION} release, 13 GPU architectures" > /opt/ggml/release/VERSION
+
+# The same library rebuilt in CI from Ollama's source and release preset, for sm_61 only
+# (.github/workflows/ollama-runner-sm61.yaml). The release's one faulted the GTX 1070 (Xid 13).
+ARG SM61_RELEASE=ollama-cuda-v12-sm61-1
+ARG SM61_SHA256=6aafcb7fa81ac6f479b33eb04702e948e0dfbd2296b31364c6443b1ce4705c26
+RUN set -eux; \
+    curl -fsSLo /tmp/sm61.tar.zst "https://github.com/windyo/addons/releases/download/${SM61_RELEASE}/ollama-cuda-v12-sm61.tar.zst"; \
+    echo "${SM61_SHA256}  /tmp/sm61.tar.zst" | sha256sum -c -; \
+    mkdir -p /opt/ggml/sm61; \
+    tar --zstd -xf /tmp/sm61.tar.zst -C /opt/ggml/sm61; \
+    rm /tmp/sm61.tar.zst; \
+    test -f /opt/ggml/sm61/libggml-cuda.so; \
+    ! objdump -p /opt/ggml/sm61/libggml-cuda.so | grep -i 'NEEDED.*cudnn'
 
 FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS driver
 
@@ -66,6 +83,7 @@ RUN apt-get update \
 
 COPY --from=driver /opt/nvidia /opt/nvidia
 COPY --from=fetch /opt/ollama /usr
+COPY --from=fetch /opt/ggml /opt/ggml
 RUN ln -s /opt/nvidia/bin/nvidia-smi /usr/local/bin/nvidia-smi \
     && echo /opt/nvidia/lib > /etc/ld.so.conf.d/nvidia.conf \
     && ldconfig \
