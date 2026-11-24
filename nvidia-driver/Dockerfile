@@ -7,6 +7,8 @@ ARG BUILD_VERSION=dev
 # consumer image ships the same userspace version.
 ARG NV_VERSION=580.196.07
 ARG NV_SHA256=2189c47fa87ae45b7a166b58c3742dd1629035069cb0fb4103ed375229c55867
+# "-no-compat32" or "" (some older releases only ship the plain .run). CI builds other branches.
+ARG NV_RUN_SUFFIX=-no-compat32
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
@@ -22,7 +24,7 @@ RUN apt-get update \
 # userspace nvidia-smi needs. No libcuda: this add-on never runs CUDA.
 RUN set -eux; \
     cd /tmp; \
-    curl -fsSLo nv.run "https://download.nvidia.com/XFree86/Linux-x86_64/${NV_VERSION}/NVIDIA-Linux-x86_64-${NV_VERSION}-no-compat32.run"; \
+    curl -fsSLo nv.run "https://download.nvidia.com/XFree86/Linux-x86_64/${NV_VERSION}/NVIDIA-Linux-x86_64-${NV_VERSION}${NV_RUN_SUFFIX}.run"; \
     echo "${NV_SHA256}  nv.run" | sha256sum -c -; \
     sh nv.run --extract-only --target /tmp/nv; \
     mkdir -p /opt/nvidia/lib; \

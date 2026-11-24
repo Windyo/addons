@@ -47,6 +47,10 @@ jobs:
             grep -iE 'powermizer|perflevel|perf_?level|pstate|perfcap|maxperf|minperf|boost|overclock|clkoffset|clock.?offset|vfoffset|undervolt|voltage|gpcclk|mclk|memclk|elpg|gpcpg|lpwr|powergat|adaptive|thermal|slowdown|pwrcap|powerlimit|powercap|perf' \
               "out/$v.all.txt" > "out/$v.power.txt" || true
             echo "::notice title=$v::$(wc -l < "out/$v.all.txt") identifiers, $(wc -l < "out/$v.power.txt") power/clock/perf; PowerMizer/PerfLevel keys: $(grep -iE 'powermizer|perflevel|maxperf' "out/$v.all.txt" | tr '\n' ' ')"
+            # Idle power features (graphics-engine power gating, memory-system clock gating, VRM
+            # phase shedding, clock gating, GC6): one annotation per version, keys only.
+            lp=$(grep -iE 'elpg|mscg|lpwr|psi|gc6|gc5|gpcpg|grpg|powergat|pwrgat|clkgat|clockgat|blcg|slcg|flcg|lowpower|deepidle|idle|ppg|sramgat|railgat|vrm' "out/$v.all.txt" | tr '\n' ' ')
+            echo "::notice title=$v idle-power keys::$lp"
             rm -rf x nv.run
           done
           ls -la out

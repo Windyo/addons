@@ -51,6 +51,7 @@ cool threshold.
 | `auto_recover` | `false` | When the GPU falls off the bus (Xid 79) and stays gone 2 minutes, reset the host (see below). |
 | `core_offset_mhz` | `0` | Negative core clock offset in MHz (NVML), applied at every start. Lowers the top boost clock; idle is unaffected. |
 | `mem_offset_mhz` | `0` | Negative memory clock offset in MHz. |
+| `console_unbind` | `false` | Detach the text console from the GPU's framebuffer (the laptop screen stops showing console text). |
 | `module_params` | `""` | Extra `nvidia.ko` parameters (space-separated `NVreg_...=value`), applied when the add-on loads the driver, i.e. after the next host reboot. |
 
 ## Host reset after a lost GPU

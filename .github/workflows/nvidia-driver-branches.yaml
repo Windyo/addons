@@ -1,0 +1,70 @@
+name: nvidia-driver-branches
+
+# Can an older NVIDIA branch replace 580 on this host? Used to test whether the GTX 1070 faults
+# (Xid 13 at the start of dense CUDA work, none with CUDA_LAUNCH_BLOCKING) are specific to 580;
+# a desktop Maxwell shows similar faults under 580 (llama.cpp #20762). Compiles nvidia.ko +
+# nvidia-uvm.ko of each branch against the live HAOS kernel (6.18.58, config read from the host) with
+# the add-on's own build script; compile errors become annotations (logs need sign-in).
+on:
+  push:
+    paths:
+      - ".github/workflows/nvidia-driver-branches.yaml"
+      - "nvidia-driver/rootfs/usr/local/bin/nv-build-modules.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["570.211.01", "550.163.01", "535.247.01", "525.147.05"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch ${{ matrix.version }}
+        id: run
+        shell: bash
+        run: |
+          v=${{ matrix.version }}
+          for suf in -no-compat32 ""; do
+            if curl -fsSLo nv.run "https://download.nvidia.com/XFree86/Linux-x86_64/$v/NVIDIA-Linux-x86_64-$v$suf.run"; then
+              echo "suffix=$suf" >> "$GITHUB_OUTPUT"
+              echo "sha=$(sha256sum nv.run | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+              echo "::notice title=$v run file::NVIDIA-Linux-x86_64-$v$suf.run sha256 $(sha256sum nv.run | cut -d' ' -f1)"
+              exit 0
+            fi
+          done
+          echo "::error title=$v::not downloadable"; exit 1
+
+      - name: Build image with ${{ matrix.version }}
+        run: |
+          docker build --build-arg NV_VERSION=${{ matrix.version }} --build-arg NV_SHA256=${{ steps.run.outputs.sha }} \
+            --build-arg NV_RUN_SUFFIX=${{ steps.run.outputs.suffix }} -t drv:${{ matrix.version }} nvidia-driver
+
+      - name: Compile for 6.18.58-haos
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          set +e
+          docker run --rm -v "$PWD/nvidia-driver/tests:/tests:ro" -v "$RUNNER_TEMP/out:/out" drv:${{ matrix.version }} \
+            nv-build-modules.sh 6.18.58-haos /tests/haos-6.18.58-kernel.config /out/m "$(nproc)" /usr/local/share/nvidia-driver/linux-patches \
+            > "$RUNNER_TEMP/out/build.log" 2>&1
+          rc=$?
+          v=${{ matrix.version }}
+          if [ $rc -eq 0 ]; then
+            echo "::notice title=$v builds::$(cat "$RUNNER_TEMP/out/m/vermagic")"
+          else
+            n=$(grep -c 'error:' "$RUNNER_TEMP/out/build.log")
+            errs=$(grep -E 'error:|Error [0-9]|ERROR' "$RUNNER_TEMP/out/build.log" | sed 's#.*/kernel-src/##;s#^/tmp/nvbuild/nv/##' | sort -u | head -n 40 \
+              | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
+            # A branch that doesn't compile yet is a result of this survey, not a CI failure.
+            echo "::warning title=$v does not compile yet ($n errors, rc $rc)::$errs"
+            tail -n 60 "$RUNNER_TEMP/out/build.log"
+          fi
+          # Only a broken toolchain/kernel tree (no compile attempt at all) fails the job.
+          grep -q 'Building NVIDIA' "$RUNNER_TEMP/out/build.log"
