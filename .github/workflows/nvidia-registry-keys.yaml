@@ -19,47 +19,65 @@ jobs:
       VERSIONS: "470.256.02 525.147.05 535.247.01 550.163.01 570.211.01 580.95.05 580.196.07"
     steps:
       - name: Extract and list keys
+        shell: bash
         run: |
           set -u
           mkdir -p out
           for v in $VERSIONS; do
-            url="https://download.nvidia.com/XFree86/Linux-x86_64/$v/NVIDIA-Linux-x86_64-$v.run"
-            if ! curl -fsSLo nv.run "$url"; then
-              url="https://download.nvidia.com/XFree86/Linux-x86_64/$v/NVIDIA-Linux-x86_64-$v-no-compat32.run"
-              curl -fsSLo nv.run "$url" || { echo "$v: not downloadable, skipped" | tee -a out/skipped.txt; continue; }
+            ok=""
+            for f in "NVIDIA-Linux-x86_64-$v.run" "NVIDIA-Linux-x86_64-$v-no-compat32.run"; do
+              code=$(curl -sSL -o nv.run -w '%{http_code}' "https://download.nvidia.com/XFree86/Linux-x86_64/$v/$f" || echo curl-failed)
+              echo "$v $f: HTTP $code, $(stat -c %s nv.run 2>/dev/null || echo 0) bytes"
+              [ "$code" = 200 ] && { ok=1; break; }
+            done
+            [ -n "$ok" ] || { echo "::warning title=$v::not downloadable (HTTP $code)"; echo "$v: not downloadable" >> out/skipped.txt; continue; }
+            rm -rf x
+            if ! sh nv.run --extract-only --target x > extract.log 2>&1; then
+              echo "::warning title=$v::extract failed: $(tail -n 3 extract.log | tr '\n' ' ')"
+              echo "$v: extract failed" >> out/skipped.txt; continue
             fi
-            rm -rf x && sh nv.run --extract-only --target x > /dev/null
-            blob=$(find x/kernel -name 'nv-kernel.o_binary' | head -1)
-            [ -n "$blob" ] || { echo "$v: no nv-kernel.o_binary" | tee -a out/skipped.txt; continue; }
+            blob=$(find x -name 'nv-kernel.o_binary' | head -1)
+            if [ -z "$blob" ]; then
+              echo "::warning title=$v::no nv-kernel.o_binary; kernel dir: $(ls x/kernel 2>&1 | tr '\n' ' ')"
+              echo "$v: no nv-kernel.o_binary" >> out/skipped.txt; continue
+            fi
+            echo "$v: blob $blob ($(stat -c %s "$blob") bytes)"
             # Identifier-like strings only; registry keys are plain ASCII names.
-            strings -n 6 "$blob" | grep -E '^[A-Za-z][A-Za-z0-9_]{5,63}$' | sort -u > "out/$v.all.txt"
+            strings -n 6 "$blob" | grep -E '^[A-Za-z][A-Za-z0-9_]{5,63}$' | sort -u > "out/$v.all.txt" || true
             grep -iE 'powermizer|perflevel|perf_?level|pstate|perfcap|maxperf|minperf|boost|overclock|clkoffset|clock.?offset|vfoffset|undervolt|voltage|gpcclk|mclk|memclk|elpg|gpcpg|lpwr|powergat|adaptive|thermal|slowdown|pwrcap|powerlimit|powercap|perf' \
               "out/$v.all.txt" > "out/$v.power.txt" || true
-            echo "$v: $(wc -l < "out/$v.all.txt") identifiers, $(wc -l < "out/$v.power.txt") power/clock/perf"
+            echo "::notice title=$v::$(wc -l < "out/$v.all.txt") identifiers, $(wc -l < "out/$v.power.txt") power/clock/perf; PowerMizer/PerfLevel keys: $(grep -iE 'powermizer|perflevel|maxperf' "out/$v.all.txt" | tr '\n' ' ')"
             rm -rf x nv.run
           done
+          ls -la out
 
       - name: Cross-version table
+        shell: bash
         run: |
+          set -u
           cd out
-          vs=$(ls *.power.txt 2>/dev/null | sed 's/\.power\.txt$//' | sort -V)
-          cat *.power.txt | sort -u > union.txt
+          vs=$(find . -maxdepth 1 -name '*.power.txt' -printf '%f\n' | sed 's/\.power\.txt$//' | sort -V)
           {
             echo "## Power/clock/perf identifiers in nv-kernel.o_binary"
             echo
-            printf '| key |'; for v in $vs; do printf ' %s |' "$v"; done; echo
-            printf '|---|'; for v in $vs; do printf '---|'; done; echo
-            while read -r k; do
-              printf '| `%s` |' "$k"
-              for v in $vs; do grep -qxF "$k" "$v.power.txt" && printf ' x |' || printf '  |'; done
+            if [ -z "$vs" ]; then
+              echo "No driver could be read."
+            else
+              cat ./*.power.txt | sort -u > union.txt
+              printf '| key |'; for v in $vs; do printf ' %s |' "$v"; done; echo
+              printf '|---|'; for v in $vs; do printf -- '---|'; done; echo
+              while read -r k; do
+                printf '| `%s` |' "$k"
+                for v in $vs; do if grep -qxF "$k" "$v.power.txt"; then printf ' x |'; else printf '  |'; fi; done
+                echo
+              done < union.txt
               echo
-            done < union.txt
-            echo
-            echo "### Must-know keys"
-            for k in PowerMizerEnable PowerMizerLevel PowerMizerDefault PowerMizerDefaultAC PerfLevelSrc OverrideMaxPerf RMPerfLimits RMDisableGpuBoost; do
-              printf -- '- `%s`:' "$k"; for v in $vs; do grep -qxF "$k" "$v.all.txt" && printf ' %s' "$v"; done; echo
-            done
-            [ -s skipped.txt ] && { echo; echo "### Skipped"; sed 's/^/- /' skipped.txt; }
+              echo "### Must-know keys"
+              for k in PowerMizerEnable PowerMizerLevel PowerMizerDefault PowerMizerDefaultAC PerfLevelSrc OverrideMaxPerf RMPerfLimits RMDisableGpuBoost; do
+                printf -- '- `%s`:' "$k"; for v in $vs; do if grep -qxF "$k" "$v.all.txt"; then printf ' %s' "$v"; fi; done; echo
+              done
+            fi
+            if [ -s skipped.txt ]; then echo; echo "### Skipped"; sed 's/^/- /' skipped.txt; fi
           } > table.md
           cat table.md >> "$GITHUB_STEP_SUMMARY"
 
