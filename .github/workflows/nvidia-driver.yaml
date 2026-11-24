@@ -29,6 +29,7 @@ jobs:
             set -e
             for f in /usr/local/bin/*.sh; do bash -n "$f"; done
             test "$(cat /opt/nvidia/VERSION)" = 580.196.07
+            python3 /usr/local/bin/nv-acpi-watch.py selftest
             ldconfig -p | grep libnvidia-ml.so.1
             test -d /opt/nvidia/kernel-src
             # driver_branch: both branches in the image, the links follow nv-branch.sh
@@ -67,6 +68,20 @@ jobs:
           docker rm -f drv
           grep -q "driver 570.211.01 (driver_branch: 570.211.01)" drv570.log
           jq -e '.state == "no_gpu" and .driver == "570.211.01"' "$RUNNER_TEMP/share/nvidia/state.json"
+
+      # The ACPI watcher's kprobes on the runner's own kernel. No NVIDIA module there, so only the
+      # system-wide notify probe can attach. Twice: kprobe definitions outlive the container, so the
+      # second run proves the first one's leftovers are cleaned up.
+      - name: ACPI watcher attaches (runner kernel)
+        shell: bash
+        run: |
+          for i in 1 2; do
+            docker run --rm --privileged --entrypoint bash nvidia-driver:test -c '
+              mkdir -p /run/t && mount -t tracefs nodev /run/t
+              timeout 5 python3 /usr/local/bin/nv-acpi-watch.py /run/t /tmp/s.json /tmp/e.log
+              cat /tmp/s.json' | tee "acpi$i.log"
+            tail -n 1 "acpi$i.log" | jq -e '.probes.notify == "ok" and (.probes | length) == 3'
+          done
 
       # The same script the add-on runs on the device, against the config read out of the
       # official HAOS 18.3 kernel (IKCONFIG). Proves the driver builds for that exact kernel.

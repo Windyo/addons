@@ -34,6 +34,7 @@ export NV_MODULE_PARAMS
 NV_MODULE_PARAMS=$(opt module_params)
 AUTO_RECOVER=$(opt auto_recover)
 PCIE_SUMMARY=/tmp/pcie-watch.json
+ACPI_SUMMARY=/tmp/acpi-watch.json
 HOT_C=$(opt hot_c)
 COOL_C=$(opt cool_c)
 BOOT=$(cat /proc/sys/kernel/random/boot_id)
@@ -223,6 +224,7 @@ log_platform_state() {
   [ -n "$gpu" ] && python3 /usr/local/bin/nv-pcie.py "$gpu" 2>&1 | while IFS= read -r l; do log "pcie: $l"; done
   log "nvml pcie: $(nvml_pcie)"
   [ -f "$PCIE_SUMMARY" ] && log "pcie watch: $(cat "$PCIE_SUMMARY")"
+  [ -f "$ACPI_SUMMARY" ] && log "acpi watch: $(cat "$ACPI_SUMMARY")"
   log "driver params: $(tr '\n' ' ' < /proc/driver/nvidia/params 2>/dev/null | sed 's/  */ /g')"
   log "kernel cmdline: $(cat /proc/cmdline)"
   # efifb draws the text console into the start of BAR1; the driver must keep that range mapped
@@ -329,6 +331,19 @@ if [ "$GPU_STATE" = ready ]; then
         | while IFS= read -r l; do log "pcie event: $l"; done &
     fi
   fi
+  # ACPI watcher: kprobes on the driver's ACPI entry points and on every ACPI notification (power-level
+  # orders from the firmware, AC/thermal events), timestamped, in /share/nvidia/acpi-events.log.
+  if [ "$(opt acpi_watch)" = true ]; then
+    TRACEFS=/run/nv-tracefs
+    mkdir -p "$TRACEFS"
+    mountpoint -q "$TRACEFS" || mount -t tracefs nodev "$TRACEFS" 2>/dev/null || true
+    if mountpoint -q "$TRACEFS"; then
+      python3 -u /usr/local/bin/nv-acpi-watch.py "$TRACEFS" "$ACPI_SUMMARY" "$SHARE/acpi-events.log" 2>&1 \
+        | while IFS= read -r l; do log "acpi event: $l"; done &
+    else
+      log "WARNING: could not mount tracefs (acpi_watch not running)"
+    fi
+  fi
   # Clock offsets (NVML, no X): probe what the card accepts, apply the configured ones (0 = none).
   clk=$(python3 /usr/local/bin/nv-clocks.py "$(opt core_offset_mhz)" "$(opt mem_offset_mhz)" 2>&1 | tail -n 1)
   log "clock offsets: $clk"
@@ -370,7 +385,7 @@ host_reset() {   # host_reset <reason>
 }
 
 # stdin commands (hassio.addon_stdin): "host-reset" resets the host now, whatever the GPU state;
-# "pcie" logs the link state, the GPU's replay counters and the error watcher's counts (read-only).
+# "pcie" logs the link state, the GPU's replay counters and both watchers' counts (read-only).
 ( while IFS= read -r cmd; do
     case "$cmd" in
       host-reset) host_reset "manual (stdin)" ;;
@@ -378,7 +393,8 @@ host_reset() {   # host_reset <reason>
         gpu=$(jq -r '.pci // empty' <<< "$ATTRS")
         [ -n "$gpu" ] && python3 /usr/local/bin/nv-pcie.py "$gpu" 2>&1 | while IFS= read -r l; do log "pcie: $l"; done
         log "nvml pcie: $(nvml_pcie)"
-        log "pcie watch: $(cat "$PCIE_SUMMARY" 2>/dev/null || echo 'not running')" ;;
+        log "pcie watch: $(cat "$PCIE_SUMMARY" 2>/dev/null || echo 'not running')"
+        log "acpi watch: $(cat "$ACPI_SUMMARY" 2>/dev/null || echo 'not running')" ;;
       "") ;;
       *) log "stdin: unknown command '$cmd' (known: host-reset, pcie)" ;;
     esac
@@ -444,8 +460,9 @@ while true; do
       --argjson nb "$([ -f "$CACHE/nvidia.ko" ] && echo true || echo false)" \
       --argjson k "$(kernel_gpu_lines)" \
       --argjson pw "$(jq -c . "$PCIE_SUMMARY" 2>/dev/null || echo null)" \
+      --argjson aw "$(jq -c . "$ACPI_SUMMARY" 2>/dev/null || echo null)" \
       '$a + {thermal: $t, hot_c: $h, cool_c: $c, processes: $p, next_boot_cache: $nb, kernel_gpu_errors: $k,
-             pcie_watch: $pw}')
+             pcie_watch: $pw, acpi_watch: $aw}')
     if [ -n "$row" ]; then
       a=$(jq -n --argjson a "$a" --argjson np "$(nvml_pcie)" '$a + {nvml_pcie: $np}')
       a=$(jq -n --argjson a "$a" --arg r "$row" '($r | split(", ")) as $f

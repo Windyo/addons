@@ -56,6 +56,7 @@ cool threshold.
 | `console_unbind` | `false` | Detach the text console from the GPU's framebuffer (the laptop screen stops showing console text). |
 | `pcie_watch` | `true` | Timestamp every PCIe link error of the GPU and its port (read and clear the latched bits every 0.5 s). Counts on the sensor (`pcie_watch`), events in the log and in `/share/nvidia/pcie-events.log`. |
 | `pcie_max_gen` | `0` | Cap the GPU's PCIe link at this generation (1-3) through the port's Target Link Speed, as a BIOS "PCIe Gen" setting does. 0 = no cap; it also undoes a cap set earlier in the same boot. Holds from the next speed change (the driver changes speed between idle and load). |
+| `acpi_watch` | `true` | Timestamp the ACPI events around the GPU through kernel probes (read-only): notifications to the GPU (the firmware's power-level orders D1–D5, GPS status), the driver's `_DSM` calls (GPS power steering and others) and every ACPI notification in the system (AC adapter, thermal zones). Counts on the sensor (`acpi_watch`), events in the log and in `/share/nvidia/acpi-events.log`. |
 | `module_params` | `""` | Extra `nvidia.ko` parameters (space-separated `NVreg_...=value`), applied when the add-on loads the driver, i.e. after the next host reboot. |
 
 ## Switching the driver branch

@@ -66,3 +66,9 @@ configuration:
     description: >-
       Highest PCIe generation the GPU's link may use: 1 = 2.5 GT/s, 2 = 5 GT/s, 3 = 8 GT/s. 0 = no
       cap (and undoes a cap set earlier in this boot). Holds from the next link speed change.
+  acpi_watch:
+    name: Watch ACPI events
+    description: >-
+      Log every ACPI notification to the GPU (the firmware's power-level orders D1-D5), every
+      _DSM call the driver makes (GPS power steering) and every ACPI notification in the system,
+      with their time. Kernel probes, read-only. Events in /share/nvidia/acpi-events.log.

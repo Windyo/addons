@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- ACPI event watcher (option `acpi_watch`, on by default). The laptop's firmware can order the GPU
+  to a lower power level (ACPI notifications 0xD1–0xD5 from its embedded controller) and NVIDIA's
+  Linux driver acts on them; nothing logged them. Kernel probes on the driver's ACPI notify handler,
+  on its `_DSM` calls and on every ACPI notification now log each one with its UTC time, next to
+  the PCIe watcher, in the log, on the sensor (`acpi_watch`) and in
+  `/share/nvidia/acpi-events.log`. Read-only: probes only record.
+
 ## 0.2.0
 
 - Option `driver_branch` (`580` default, `570`): the image carries NVIDIA 570.211.01 next to

@@ -1,6 +1,6 @@
 ---
 name: NVIDIA Driver
-version: 0.2.0
+version: 0.2.1
 slug: nvidia-driver
 description: >-
   Builds, loads and monitors the NVIDIA driver on HAOS (Pascal / driver 580) and publishes the
@@ -50,6 +50,7 @@ options:
   console_unbind: false
   pcie_watch: true
   pcie_max_gen: 0
+  acpi_watch: true
 schema:
   driver_branch: list(580|570)
   load_driver: bool
@@ -62,5 +63,6 @@ schema:
   mem_offset_mhz: int(-1000,0)
   console_unbind: bool
   pcie_watch: bool
+  acpi_watch: bool
   pcie_max_gen: int(0,3)
   module_params: match(^(NVreg_[A-Za-z0-9]+=[A-Za-z0-9_.;=]+( |$))*$)
