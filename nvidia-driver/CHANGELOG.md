@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.10
+
+- Quieter log while HA Core is down. At a host boot the add-on starts about 36 s before Core, and
+  the Supervisor answers 502 until Core is up, which logged curl's error and a warning every minute.
+  Now one warning with the HTTP code or curl error ("HA Core not reachable (HTTP 502), status not
+  published yet"), and one line when publishing works again.
+
 ## 0.1.9
 
 - Fix: the PCIe watcher and `pcie_max_gen` (0.1.8), and `console_unbind` (0.1.7), failed with
