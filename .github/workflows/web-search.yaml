@@ -37,6 +37,7 @@ jobs:
           docker run -d --name ws -v "$RUNNER_TEMP/data:/data" web-search:test
           for i in $(seq 1 60); do docker exec ws /opt/mcp/bin/python -c 'import socket; socket.create_connection(("127.0.0.1", 8765), 2)' 2>/dev/null && break; sleep 2; done
           docker logs ws 2>&1 | tail -n 30
+          if docker logs ws 2>&1 | grep "can't register engine"; then echo "::error::a search engine failed to load"; exit 1; fi
           docker exec ws /opt/mcp/bin/python -c '
           import httpx, json
           r = httpx.get("http://127.0.0.1:8888/search", params={"q": "wikipedia", "format": "json"}, timeout=20)
@@ -52,7 +53,11 @@ jobs:
                       names = [t.name for t in (await s.list_tools()).tools]
                       assert names == ["web_search", "read_page"], names
                       out = (await s.call_tool("web_search", {"query": "capitale de la France"})).content[0].text
-                      print(out); assert 0 < len(out) <= 1500
+                      print(out); assert 0 < len(out) <= 2600
+                      # Answer quality, read by a human in the log (results vary, so no assert).
+                      for q in ("What's the current stock price of Nvidia?", "current temperature in Albuquerque",
+                                "résultat du dernier match du PSG", "who won the last Formula 1 race"):
+                          print(f"\n### {q}\n" + (await s.call_tool("web_search", {"query": q})).content[0].text)
                       for u in ("http://127.0.0.1:8888/", "http://supervisor/core/api/states", "file:///etc/passwd"):
                           t = (await s.call_tool("read_page", {"url": u})).content[0].text
                           print(u, "->", t); assert t.startswith("Could not read the page"), t

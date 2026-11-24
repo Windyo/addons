@@ -1,6 +1,6 @@
 ---
 name: Web Search
-version: 0.1.0
+version: 0.2.0
 slug: web-search
 description: >-
   SearXNG plus a small MCP server: gives the local LLM a web_search and a read_page tool, and
