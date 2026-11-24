@@ -92,7 +92,7 @@ def excerpt(text, terms):
 
 
 async def stock_quote(query, terms):
-    """'Live quote NVDA (NVIDIA Corporation, NasdaqGS): 165.03 USD, +1.20 % today, last trade …', or ''."""
+    """'Live quote NVDA (NVIDIA Corporation, NasdaqGS): 165.03 USD, +1.20 % on that session, last trade …', or ''."""
     name = " ".join(sorted(terms - {"stock", "stocks", "share", "shares", "price", "quote", "cours",
                                     "action", "actions", "bourse", "prix", "valeur"}, key=query.lower().find))
     if not name:
@@ -116,7 +116,7 @@ async def stock_quote(query, terms):
     price, prev = meta.get("regularMarketPrice"), meta.get("chartPreviousClose") or meta.get("previousClose")
     if price is None:
         return ""
-    change = f", {100 * (price - prev) / prev:+.2f} % today" if prev else ""
+    change = f", {100 * (price - prev) / prev:+.2f} % on that session" if prev else ""
     when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(meta["regularMarketTime"])) if meta.get("regularMarketTime") else ""
     label = hits[0].get("longname") or hits[0].get("shortname") or ""
     return f"Live quote {symbol} ({label}, {meta.get('exchangeName', '')}): {price} {meta.get('currency', '')}{change}" + \
