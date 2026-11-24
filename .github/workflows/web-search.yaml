@@ -43,7 +43,7 @@ jobs:
           r = httpx.get("http://127.0.0.1:8888/search", params={"q": "wikipedia", "format": "json"}, timeout=20)
           r.raise_for_status(); print("searxng results:", len(r.json()["results"]))'
           docker exec -i ws /opt/mcp/bin/python - <<'PY'
-          import asyncio
+          import asyncio, time
           from mcp import ClientSession
           from mcp.client.streamable_http import streamablehttp_client
           async def main():
@@ -57,7 +57,11 @@ jobs:
                       # Answer quality, read by a human in the log (results vary, so no assert).
                       for q in ("What's the current stock price of Nvidia?", "current temperature in Albuquerque",
                                 "résultat du dernier match du PSG", "who won the last Formula 1 race"):
-                          print(f"\n### {q}\n" + (await s.call_tool("web_search", {"query": q})).content[0].text)
+                          t0 = time.monotonic()
+                          out = (await s.call_tool("web_search", {"query": q})).content[0].text
+                          # Annotations are public; job logs need a login.
+                          msg = f"{time.monotonic() - t0:.1f} s, {len(out)} chars\n{out}"
+                          print(f"::notice title={q}::" + msg.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
                       for u in ("http://127.0.0.1:8888/", "http://supervisor/core/api/states", "file:///etc/passwd"):
                           t = (await s.call_tool("read_page", {"url": u})).content[0].text
                           print(u, "->", t); assert t.startswith("Could not read the page"), t
