@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- Fix: the `prewarm_s` gpu-burn ran with 512 MB and died at start (it needs ~800 MB for its
+  matrices), so llama-bench never ran and the stage showed as failed. It now uses `burn_mib`
+  (default 2048), and a failed prewarm is logged as such.
+
 ## 0.5.0
 
 - Clock timeline: NVML is sampled in-process 4 times a second (P-state, graphics and memory clocks,

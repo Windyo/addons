@@ -306,10 +306,12 @@ def stage_model():
     if OPTS["prewarm_s"]:
         # A/B for "the fault comes with the ramp out of idle P8": raise the clocks with gpu-burn
         # (never faulted), then start llama-bench at once, before the card drops back to P8.
-        w = run_stage("prewarm", [f"{BIN}/gpu_burn", "-m", "512", str(OPTS["prewarm_s"])],
+        # gpu-burn needs ~800 MB for its 8192x8192 matrices: 512 MB made it die at start (0.5.0).
+        w = run_stage("prewarm", [f"{BIN}/gpu_burn", "-m", str(OPTS["burn_mib"]), str(OPTS["prewarm_s"])],
                       OPTS["prewarm_s"] + 60, cwd=BIN)
         if w["rc"] != 0 or w["aborted"]:
             results["stages"]["model"] = {"error": f"prewarm failed: rc {w['rc']}, {w['aborted']}"}
+            log("model: not run, the prewarm (gpu-burn) failed")
             return False
     r = run_stage("model", [f"{BIN}/llama-bench", "-m", MODEL_FILE, "-ngl", "99", "-fa", "0",
                             "-p", pp, "-n", "64", "-r", "1", "-o", "md"], 900, env=env)

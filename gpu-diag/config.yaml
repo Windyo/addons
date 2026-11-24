@@ -1,6 +1,6 @@
 ---
 name: GPU Diagnostic
-version: 0.5.0
+version: 0.5.1
 slug: gpu-diag
 description: >-
   Throw-away test: why does llama.cpp fault the GPU? VRAM test, llama.cpp's own kernel tests

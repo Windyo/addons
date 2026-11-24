@@ -13,7 +13,7 @@ Start it by hand with the NVIDIA Driver add-on `ready` and the GPU cool. It runs
 | `model` | llama-bench (same build) on the real Qwen3-4B Q4_K_M, downloaded once (2.5 GB): prompt batches of 32/256/512 tokens (`model_tests: pp_tg`), 64 generated tokens; `model_env` adds variables (e.g. `GGML_CUDA_DISABLE_FUSION=1`) | the real workload faults the card even with our build |
 | `burn` | gpu-burn: cuBLAS SGEMM at full load for `burn_seconds`, stopped at `max_temp_c` | the card faults under full load (power, heat, hardware) |
 
-`prewarm_s` (seconds, 0 = off) runs gpu-burn just before `model`, so llama-bench starts with the
+`prewarm_s` (seconds, 0 = off) runs gpu-burn (`burn_mib` of memory) just before `model`, so llama-bench starts with the
 card already clocked up instead of in idle P8.
 
 Each stage's result in `sensor.gpu_diag_status` has `clocks`: the P-state, clock, PCIe-link and power
