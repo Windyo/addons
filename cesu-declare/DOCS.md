@@ -3,7 +3,7 @@
 Automates the monthly CESU (URSSAF, France) salary declaration of a household employee on
 <https://www.cesu.urssaf.fr> with a headless Chromium (Playwright).
 
-## Version 0.2.1 is still a dry run
+## Version 0.2.2 is still a dry run
 
 This release is an **explorer**. For each request it logs in, handles the one-time email code, opens
 the declaration form, checks the employee, **selects the period**, fills the whole hours and the net
