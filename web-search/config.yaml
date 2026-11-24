@@ -1,10 +1,10 @@
 ---
 name: Web Search
-version: 0.2.0
+version: 0.2.1
 slug: web-search
 description: >-
-  SearXNG plus a small MCP server: gives the local LLM a web_search and a read_page tool, and
-  nothing else. Internal only.
+  SearXNG plus a small MCP server: gives the local LLM a web_search tool, and nothing else.
+  Internal only.
 url: https://github.com/windyo/addons/tree/master/web-search
 arch:
   - amd64

@@ -28,7 +28,7 @@ jobs:
           echo "::notice title=Image size::$(docker image inspect -f '{{.Size}}' web-search:test | numfmt --to=iec)"
 
       # End to end on the runner: SearXNG answers JSON, the MCP server lists its tools, a real
-      # search returns capped text, and read_page refuses internal addresses.
+      # search returns capped text, and page fetching refuses internal addresses.
       - name: Runs end to end
         shell: bash
         run: |
@@ -51,7 +51,7 @@ jobs:
                   async with ClientSession(r, w) as s:
                       await s.initialize()
                       names = [t.name for t in (await s.list_tools()).tools]
-                      assert names == ["web_search", "read_page"], names
+                      assert names == ["web_search"], names
                       out = (await s.call_tool("web_search", {"query": "capitale de la France"})).content[0].text
                       print(out); assert 0 < len(out) <= 2600
                       # Answer quality, read by a human in the log (results vary, so no assert).
@@ -62,9 +62,20 @@ jobs:
                           # Annotations are public; job logs need a login.
                           msg = f"{time.monotonic() - t0:.1f} s, {len(out)} chars\n{out}"
                           print(f"::notice title={q}::" + msg.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
-                      for u in ("http://127.0.0.1:8888/", "http://supervisor/core/api/states", "file:///etc/passwd"):
-                          t = (await s.call_tool("read_page", {"url": u})).content[0].text
-                          print(u, "->", t); assert t.startswith("Could not read the page"), t
+          asyncio.run(main())
+          PY
+          # Result URLs come from the web: page fetching must refuse the internal network.
+          docker exec -i -w /usr/local/bin ws /opt/mcp/bin/python - <<'PY'
+          import asyncio, httpx, mcp_server as m
+          async def main():
+              for u in ("http://127.0.0.1:8888/", "http://supervisor/core/api/states", "file:///etc/passwd",
+                        "http://[::1]/", "http://192.168.1.1/"):
+                  try:
+                      await m.page_text(u)
+                  except (ValueError, httpx.HTTPError, OSError) as e:
+                      print(u, "-> refused:", e)
+                  else:
+                      raise SystemExit(f"{u} was fetched")
           asyncio.run(main())
           PY
           docker rm -f ws

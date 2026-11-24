@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- `read_page` removed: results show the site, not the URL, so the model could never call it, and
+  `web_search` already reads the top 3 pages. One tool is easier for a 4B model.
+
 ## 0.2.0
 
 - `web_search` reads the top 3 result pages in parallel (4 s each) and adds the sentences that

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Web search for a small local LLM, over MCP (Streamable HTTP at :8765/mcp).
 
-Two tools, sized for a 4B model. Output is capped here because Home Assistant truncates nothing:
+One tool, sized for a 4B model. Output is capped here because Home Assistant truncates nothing:
 - web_search(query): top results from the local SearXNG plus the passages of the top pages that
   match the query (a 4B model can't answer from landing-page snippets), 2600 characters at most.
-- read_page(url): the main text of one public web page, 4000 characters at most.
-read_page only fetches public http(s) addresses: the LLM reads untrusted web text, so it must
-never be steered into the internal network (Supervisor, Home Assistant, other add-ons).
+Pages are only fetched from public http(s) addresses: result URLs come from the web, so they must
+never reach the internal network (Supervisor, Home Assistant, other add-ons).
+(0.1/0.2.0 also had read_page(url); the model only ever saw site names, never URLs, so it couldn't
+use it, and one tool is easier for a 4B model to pick.)
 """
 import asyncio
 import ipaddress
@@ -25,7 +26,6 @@ OPTS = json.load(open("/data/options.json"))
 MAX_RESULTS = 5
 SNIPPET = 240
 SEARCH_CAP = 2600
-PAGE_CAP = 4000
 PAGE_BYTES = 2_000_000
 TIMEOUT = 10
 EXCERPT_PAGES = 3     # top results read by web_search, in parallel
@@ -203,16 +203,6 @@ async def page_text(url):
             raise ValueError("too many redirects")
     html = body.decode("utf-8", errors="replace")
     return (await asyncio.to_thread(trafilatura.extract, html, include_comments=False) or "").strip()
-
-
-@mcp.tool()
-async def read_page(url: str) -> str:
-    """Read the main text of one web page found by web_search (first 4000 characters)."""
-    try:
-        text = await page_text(url)
-    except (ValueError, httpx.HTTPError, OSError) as e:
-        return f"Could not read the page: {e}"
-    return cap(text, PAGE_CAP) if text else "No readable text on this page."
 
 
 if __name__ == "__main__":

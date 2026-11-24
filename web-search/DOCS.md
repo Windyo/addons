@@ -4,10 +4,10 @@ Gives the local LLM (Ollama CUDA) a way to look things up, and nothing else: no 
 
 - **SearXNG** runs inside the add-on (not reachable from outside it) and queries DuckDuckGo,
   Brave, Bing, Qwant, Wikipedia, Wikidata and news engines. Google is off (CAPTCHAs).
-- An **MCP server** on port 8765 offers two tools:
-  - `web_search(query)`: the top 5 results as "title — snippet — site", 1500 characters at most.
-  - `read_page(url)`: the main text of one page, 4000 characters at most. It only fetches public
-    http(s) addresses, never the internal network.
+- An **MCP server** on port 8765 offers one tool, `web_search(query)`: a live quote for stock
+  questions, the sentences of the top 3 pages that match the query, then the top 5 results as
+  "title — snippet — site", 2600 characters at most. Pages are only fetched from public http(s)
+  addresses, never the internal network.
 
 ## Home Assistant
 
