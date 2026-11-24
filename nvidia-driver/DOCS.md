@@ -49,6 +49,8 @@ cool threshold.
 | `hot_c` | `85` | GPU temperature at which consumers back off. |
 | `cool_c` | `78` | Temperature at which they return. |
 | `auto_recover` | `false` | When the GPU falls off the bus (Xid 79) and stays gone 2 minutes, reset the host (see below). |
+| `core_offset_mhz` | `0` | Negative core clock offset in MHz (NVML), applied at every start. Lowers the top boost clock; idle is unaffected. |
+| `mem_offset_mhz` | `0` | Negative memory clock offset in MHz. |
 | `module_params` | `""` | Extra `nvidia.ko` parameters (space-separated `NVreg_...=value`), applied when the add-on loads the driver, i.e. after the next host reboot. |
 
 ## Host reset after a lost GPU

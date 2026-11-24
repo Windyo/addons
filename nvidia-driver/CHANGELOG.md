@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+- Clock offsets through NVML (no X server needed): options `core_offset_mhz` (-500..0) and
+  `mem_offset_mhz` (-1000..0), applied at every start. With both at 0 the add-on only probes which
+  offsets the card accepts and logs it (`clock_offsets` on `sensor.nvidia_gpu_status`). On
+  2026-11-24 a fault came on a 113.5 W spike at the 115 W cap while the boost clock climbed
+  1442 -> 1885 MHz; a lower top clock means lower voltage and smaller spikes.
+
 ## 0.1.5
 
 - Host reset for a wedged GPU. After Xid 79 the GPU's users hang inside the driver, the Supervisor's

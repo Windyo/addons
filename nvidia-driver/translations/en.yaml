@@ -36,3 +36,11 @@ configuration:
       When the GPU falls off the bus (Xid 79) and stays gone for 2 minutes, flush the disks and
       do a full platform reset, which power-cycles the GPU. A normal reboot hangs in that state.
       At most twice per 24 hours. Off by default.
+  core_offset_mhz:
+    name: Core clock offset (MHz)
+    description: >-
+      Negative offset on the GPU core clock (0 = none). Lowers the top boost clock and its voltage,
+      so load spikes are smaller. Idle clocks are not affected. Applied at every add-on start.
+  mem_offset_mhz:
+    name: Memory clock offset (MHz)
+    description: Negative offset on the memory clock (0 = none). Applied at every add-on start.

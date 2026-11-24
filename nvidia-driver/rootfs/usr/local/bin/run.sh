@@ -228,6 +228,12 @@ if [ "$GPU_STATE" = ready ]; then
   ATTRS=$(jq -n --argjson a "$ATTRS" --arg d "$dmi" --arg l "$lgc" \
     '$a + {platform: $d, clock_lock_test: $l}')
   log_platform_state
+  # Clock offsets (NVML, no X): probe what the card accepts, apply the configured ones (0 = none).
+  clk=$(python3 /usr/local/bin/nv-clocks.py "$(opt core_offset_mhz)" "$(opt mem_offset_mhz)" 2>&1 | tail -n 1)
+  log "clock offsets: $clk"
+  if jq -e . > /dev/null 2>&1 <<< "$clk"; then
+    ATTRS=$(jq -n --argjson a "$ATTRS" --argjson c "$clk" '$a + {clock_offsets: $c}')
+  fi
 fi
 set_state "$GPU_STATE"
 

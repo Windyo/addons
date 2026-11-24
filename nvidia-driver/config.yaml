@@ -1,6 +1,6 @@
 ---
 name: NVIDIA Driver
-version: 0.1.5
+version: 0.1.6
 slug: nvidia-driver
 description: >-
   Builds, loads and monitors the NVIDIA driver on HAOS (Pascal / driver 580) and publishes the
@@ -44,6 +44,8 @@ options:
   cool_c: 78
   module_params: ""
   auto_recover: false
+  core_offset_mhz: 0
+  mem_offset_mhz: 0
 schema:
   load_driver: bool
   build_jobs: int(1,8)
@@ -51,4 +53,6 @@ schema:
   hot_c: int(70,95)
   cool_c: int(60,90)
   auto_recover: bool
+  core_offset_mhz: int(-500,0)
+  mem_offset_mhz: int(-1000,0)
   module_params: match(^(NVreg_[A-Za-z0-9]+=[A-Za-z0-9_.;=]+( |$))*$)
