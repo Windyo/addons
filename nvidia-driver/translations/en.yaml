@@ -1,5 +1,11 @@
 ---
 configuration:
+  driver_branch:
+    name: Driver branch
+    description: >-
+      580 (default) or 570, to test whether the GPU faults come from the 580 driver. Takes effect at
+      the next host reboot; the add-on builds the modules in the background first (about 15 min).
+      Whisper and Ollama ship 580 userspace and stay off the GPU while 570 is loaded.
   load_driver:
     name: Load the NVIDIA driver
     description: >-

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0
+
+- Runs with either driver branch the NVIDIA Driver add-on can load (0.2.0 `driver_branch`): the
+  image has the 580.196.07 and 570.211.01 userspace and uses the one matching the loaded module.
+
 ## 0.5.1
 
 - Fix: the `prewarm_s` gpu-burn ran with 512 MB and died at start (it needs ~800 MB for its

@@ -31,6 +31,17 @@ jobs:
             test "$(cat /opt/nvidia/VERSION)" = 580.196.07
             ldconfig -p | grep libnvidia-ml.so.1
             test -d /opt/nvidia/kernel-src
+            # driver_branch: both branches in the image, the links follow nv-branch.sh
+            test "$(nv-branch.sh 570)" = 570.211.01
+            test "$(cat /opt/nvidia/VERSION)" = 570.211.01
+            readlink -f /opt/nvidia/lib/libnvidia-ml.so.1 | grep -q "libnvidia-ml.so.570.211.01$"
+            readlink -f /usr/local/bin/nvidia-smi | grep -q "/branches/570.211.01/bin/nvidia-smi$"
+            test -f /opt/nvidia/kernel-src/Kbuild
+            ldconfig -p | grep -q "libnvidia-ml.so.1 .*=> /opt/nvidia/lib/libnvidia-ml.so.1"
+            test "$(nv-branch.sh 580)" = 580.196.07
+            readlink -f /opt/nvidia/lib/libnvidia-ml.so.1 | grep -q "libnvidia-ml.so.580.196.07$"
+            if nv-branch.sh 999 2>/dev/null; then echo "unknown branch must fail"; exit 1; fi
+            test "$(cat /opt/nvidia/VERSION)" = 580.196.07
             if find / -xdev -name "libcudnn*" | grep .; then echo "cuDNN must never ship"; exit 1; fi'
 
       # No GPU on the runner: the add-on must still reach its monitor loop, write the consumer
@@ -48,6 +59,14 @@ jobs:
           cat "$RUNNER_TEMP/share/nvidia/state.json"
           jq -e '.state == "no_gpu" and (.boot_id | length) == 36 and .thermal == "ok" and .driver == "580.196.07"
                  and (.updated | fromdateiso8601) > (now - 60)' "$RUNNER_TEMP/share/nvidia/state.json"
+          # driver_branch 570 with no driver loaded: the add-on runs on 570's userspace.
+          jq '.driver_branch = "570"' "$RUNNER_TEMP/data/options.json" > o.json && mv o.json "$RUNNER_TEMP/data/options.json"
+          docker run -d --name drv -v "$RUNNER_TEMP/data:/data" -v "$RUNNER_TEMP/share:/share" nvidia-driver:test
+          sleep 20
+          docker logs drv | tee drv570.log
+          docker rm -f drv
+          grep -q "driver 570.211.01 (driver_branch: 570.211.01)" drv570.log
+          jq -e '.state == "no_gpu" and .driver == "570.211.01"' "$RUNNER_TEMP/share/nvidia/state.json"
 
       # The same script the add-on runs on the device, against the config read out of the
       # official HAOS 18.3 kernel (IKCONFIG). Proves the driver builds for that exact kernel.
@@ -69,6 +88,21 @@ jobs:
           echo "config drift:"; cat "$d/config-drift.txt"
           test "$(cat "$d/vermagic")" = "6.18.52-haos SMP preempt mod_unload "
           docker run --rm -v "$d:/m:ro" nvidia-driver:test modinfo /m/nvidia.ko /m/nvidia-uvm.ko
+
+      # driver_branch 570 (the 580-regression test) for the kernel HAOS runs now, through the same
+      # NV_ROOT path the add-on uses for a branch that isn't loaded.
+      - name: Compile driver 570 for 6.18.58-haos
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/out570"
+          docker run --rm -e NV_ROOT=/opt/nvidia/branches/570.211.01 \
+            -v "$PWD/nvidia-driver/tests:/tests:ro" -v "$RUNNER_TEMP/out570:/out" \
+            nvidia-driver:test \
+            nv-build-modules.sh 6.18.58-haos /tests/haos-6.18.58-kernel.config /out/m "$(nproc)" /usr/local/share/nvidia-driver/linux-patches \
+            2>&1 | tee "$RUNNER_TEMP/out/build.log"
+          test "$(cat "$RUNNER_TEMP/out570/m/vermagic")" = "6.18.58-haos SMP preempt mod_unload "
+          test "$(cat "$RUNNER_TEMP/out570/m/driver_version")" = 570.211.01
+          docker run --rm -v "$RUNNER_TEMP/out570/m:/m:ro" nvidia-driver:test modinfo /m/nvidia.ko | grep -E "^(version|vermagic):"
 
       - name: Report failure details
         if: failure()

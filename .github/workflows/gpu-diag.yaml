@@ -39,6 +39,13 @@ jobs:
             done
             ldd /opt/diag/bin/test-backend-ops | grep -E "libcuda.so.1 => /opt/nvidia/lib/"
             test "$(cat /opt/nvidia/VERSION)" = 580.196.07
+            # Both driver branches; the same relink diag.py does when 570 is loaded.
+            for d in /opt/nvidia/branches/580.196.07/lib /opt/nvidia/branches/570.211.01/lib; do test -e "$d/libcuda.so.1"; test -e "$d/libcuda.so"; done
+            test -f /opt/nvidia/branches/570.211.01/lib/libnvidia-gpucomp.so.570.211.01
+            for n in VERSION lib bin; do ln -sfn "branches/570.211.01/$n" "/opt/nvidia/$n"; done; ldconfig
+            readlink -f "$(ldd /opt/diag/bin/test-backend-ops | awk "/libcuda.so.1 =>/ {print \$3}")" | grep -q "libcuda.so.570.211.01$"
+            ldconfig -p | grep -q "libnvidia-gpucomp.so.570.211.01 .*=> /opt/nvidia/lib/"
+            for n in VERSION lib bin; do ln -sfn "branches/580.196.07/$n" "/opt/nvidia/$n"; done; ldconfig
             if find / -xdev -name "libcudnn*" | grep .; then echo "cuDNN must never ship"; exit 1; fi
             cat /opt/diag/VERSIONS'
 

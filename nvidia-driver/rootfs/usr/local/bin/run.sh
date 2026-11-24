@@ -7,6 +7,15 @@
 # States: no_gpu, building, build_failed, built, load_refused, load_failed, ready, gpu_error.
 # Stopping the add-on does not unload the driver; unloading needs a host reboot.
 set -uo pipefail
+# Driver branch: 580 (default) or 570 (driver_branch), both in the image. nvidia-smi and NVML must
+# match the kernel module, so a branch already loaded this boot stays in use; the chosen one loads at
+# the next boot (its modules are built in the background, see gpu_stage).
+NV_WANT=$(/usr/local/bin/nv-branch.sh "$(jq -r '.driver_branch // "580"' /data/options.json)") \
+  || NV_WANT=$(cat /opt/nvidia/VERSION)
+NV_LOADED=$(cat /sys/module/nvidia/version 2>/dev/null || true)
+if [ -n "$NV_LOADED" ] && [ "$NV_LOADED" != "$NV_WANT" ]; then
+  /usr/local/bin/nv-branch.sh "$NV_LOADED" > /dev/null || true
+fi
 . /usr/local/bin/common.sh
 
 KREL=$(uname -r)
@@ -36,7 +45,7 @@ TEMP=""
 VRAM_T=""
 VRAM_U=""
 
-log "NVIDIA driver: kernel $KREL, driver $NV_VERSION, load_driver=$LOAD, thermal ${HOT_C}/${COOL_C} C, module_params='${NV_MODULE_PARAMS}'"
+log "NVIDIA driver: kernel $KREL, driver $NV_VERSION (driver_branch: $NV_WANT), load_driver=$LOAD, thermal ${HOT_C}/${COOL_C} C, module_params='${NV_MODULE_PARAMS}'"
 
 # write_state: atomic write of the consumer contract (docs/plans/gpu-stack/plan.md §3).
 # Consumers use the GPU only if state == ready, boot_id is theirs, and updated is < 60 s old.
@@ -57,15 +66,18 @@ set_state() {
   publish "$GPU_STATE" "$ATTRS"
 }
 
-# build_modules: build the cached modules for this kernel (one build at a time).
+# build_modules [version]: build the cached modules for this kernel (one build at a time), for the
+# branch in use or another one in the image.
 build_modules() {
-  local blog="$LOGS/build-${KREL}.log" patch_dir
+  local v=${1:-$NV_VERSION} blog="$LOGS/build-${KREL}.log" patch_dir out
+  out="$DATA/$v/$KREL"
+  [ "$v" = "$NV_VERSION" ] || blog="$LOGS/build-${v}-${KREL}.log"
   patch_dir=$(fetch_haos_patches)
   (
     flock -n 9 || { echo "another build is running"; exit 1; }
-    rm -rf "$CACHE.tmp"
-    /usr/local/bin/nv-build-modules.sh "$KREL" /proc/config.gz "$CACHE.tmp" "$JOBS" "$patch_dir" \
-      && mv "$CACHE.tmp" "$CACHE"
+    rm -rf "$out.tmp"
+    NV_ROOT="/opt/nvidia/branches/$v" /usr/local/bin/nv-build-modules.sh "$KREL" /proc/config.gz "$out.tmp" "$JOBS" "$patch_dir" \
+      && mv "$out.tmp" "$out"
   ) 9> "$DATA/build.lock" > "$blog" 2>&1
 }
 
@@ -102,6 +114,16 @@ gpu_stage() {
     if [ ! -f "$CACHE/nvidia.ko" ]; then
       log "driver already loaded; building the module cache in the background for the next boot"
       build_modules &
+    elif [ "$NV_WANT" != "$NV_VERSION" ]; then
+      ATTRS=$(jq -n --argjson a "$ATTRS" --arg v "$NV_WANT" '$a + {driver_next_boot: $v}')
+      if [ -f "$DATA/$NV_WANT/$KREL/nvidia.ko" ]; then
+        log "driver_branch: $NV_WANT loads at the next boot (modules ready)"
+      else
+        log "driver_branch: $NV_WANT loads at the next boot; building its modules in the background (~15 min)"
+        ( renice -n 19 "$BASHPID" > /dev/null; build_modules "$NV_WANT"
+          if [ -f "$DATA/$NV_WANT/$KREL/nvidia.ko" ]; then log "driver_branch: $NV_WANT modules built"
+          else log "ERROR: driver_branch: $NV_WANT build failed, see $LOGS/build-${NV_WANT}-${KREL}.log"; fi ) &
+      fi
     fi
     GPU_STATE=ready
     return
@@ -166,6 +188,32 @@ nvml_pcie() {
   jq -c . <<< "$j" 2>/dev/null || echo '{}'
 }
 
+# acpi_dump <tables dir>: the DSDT and SSDTs, decompiled to /share/nvidia/acpi/*.dsl once per boot
+# (never MSDM/SLIC: they hold the Windows licence). Hypothesis: laptop firmware steers the GPU's power.
+# Gigabyte's Command & Control drives GB_WMIACPI_Get/Set (WMI methods WMBC/WMBD: Smart Turbo, Turbo
+# Mode, fan modes); those two are logged so the command codes and EC fields this model uses are
+# known before anything is written.
+acpi_dump() {
+  local src=$1 out="$SHARE/acpi" tmp=/tmp/acpi t m l
+  if [ ! -r "$src/DSDT" ]; then log "acpi: $src/DSDT not readable"; return; fi
+  if [ "$(cat "$out/boot_id" 2>/dev/null)" != "$BOOT" ]; then
+    rm -rf "$tmp" "$out"; mkdir -p "$tmp" "$out"
+    for t in "$src"/DSDT "$src"/SSDT*; do
+      [ -f "$t" ] && cat "$t" > "$tmp/$(basename "$t").aml"
+    done
+    (cd "$tmp" && iasl -d ./*.aml > /dev/null 2>&1 || true)
+    cp "$tmp"/*.aml "$tmp"/*.dsl "$out"/ 2>/dev/null || true
+    echo "$BOOT" > "$out/boot_id"
+  fi
+  log "acpi: $(ls "$out"/*.aml 2>/dev/null | wc -l) tables, $(ls "$out"/*.dsl 2>/dev/null | wc -l) decompiled, in $out"
+  for m in WMBC WMBD; do
+    awk -v m="$m" '$0 ~ "Method \\(" m "," {p=1; d=0}
+      p {f=FILENAME; sub(/.*\//, "", f); print f ": " $0; n=gsub(/\{/,"{"); c=gsub(/\}/,"}"); d+=n-c; if (d<=0 && n+c>0 && ++k) p=0; if (++lines>600) exit}' \
+      "$out"/*.dsl 2>/dev/null | while IFS= read -r l; do log "acpi $m: $l"; done
+  done
+  log "ACPI platform_profile: $(cat "${src%/tables}/platform_profile" 2>/dev/null || echo none) (choices: $(cat "${src%/tables}/platform_profile_choices" 2>/dev/null || echo none))"
+}
+
 # log_platform_state: read-only facts the GPU faults may depend on, logged at start and on gpu_error.
 # PCIe: link speed/width, ASPM, relaxed ordering/no-snoop, and the latched error bits of the GPU and
 # its root port (the HAOS kernel has no AER driver, so link errors are never reported otherwise).
@@ -217,25 +265,6 @@ if [ "$GPU_STATE" = ready ]; then
     printf '%s=%s; ' "$f" "$(cat /sys/class/dmi/id/$f 2>/dev/null || echo '?')"; done)
   log "platform: $dmi"
   log "WMI GUIDs: $(ls /sys/bus/wmi/devices 2>/dev/null | tr '\n' ' ')"
-  # Gigabyte's Command & Control drives GB_WMIACPI_Get/Set (WMI methods WMBC/WMBD in the ACPI
-  # tables): Smart Turbo, Turbo Mode, fan modes. Decompile the tables and log those two methods so the
-  # command codes and EC fields this model uses are known before anything is written.
-  if [ -r /sys/firmware/acpi/tables/DSDT ]; then
-    acpi=/tmp/acpi; rm -rf "$acpi"; mkdir -p "$acpi"
-    for t in /sys/firmware/acpi/tables/DSDT /sys/firmware/acpi/tables/SSDT*; do
-      [ -r "$t" ] && cat "$t" > "$acpi/$(basename "$t").aml"
-    done
-    (cd "$acpi" && iasl -d ./*.aml > /dev/null 2>&1 || true)
-    mkdir -p /share/nvidia/acpi && cp "$acpi"/*.dsl /share/nvidia/acpi/ 2>/dev/null || true
-    for m in WMBC WMBD; do
-      awk -v m="$m" '$0 ~ "Method \\(" m "," {p=1; d=0}
-        p {f=FILENAME; sub(/.*\//, "", f); print f ": " $0; n=gsub(/\{/,"{"); c=gsub(/\}/,"}"); d+=n-c; if (d<=0 && n+c>0 && ++k) p=0; if (++lines>600) exit}' \
-        "$acpi"/*.dsl | while IFS= read -r l; do log "acpi $m: $l"; done
-    done
-  else
-    log "ACPI tables not readable"
-  fi
-  log "ACPI platform_profile: $(cat /sys/firmware/acpi/platform_profile 2>/dev/null || echo none) (choices: $(cat /sys/firmware/acpi/platform_profile_choices 2>/dev/null || echo none))"
   log "temperature controls: $(nvidia-smi -q -d TEMPERATURE 2>&1 | grep -iE 'target|slowdown|shutdown|max operating' | sed 's/  */ /g' | tr '\n' ';')"
   # Clock lock test with the full supported range (no effective change), then reset. Tells whether
   # nvidia-smi -lgc works on this card at all.
@@ -268,6 +297,8 @@ if [ "$GPU_STATE" = ready ]; then
     fi
   fi
   log "private sysfs: $(awk -v m="$SYSRW" '$2 == m {print $4}' /proc/mounts | tail -n 1)"
+  # Docker masks /sys/firmware in the container's /sys; the private mount shows it.
+  if mountpoint -q "$SYSRW"; then acpi_dump "$SYSRW/firmware/acpi/tables"; fi
   if mountpoint -q "$SYSRW" && sysfs_rw; then
     for c in "$SYSRW"/class/vtconsole/vtcon*; do
       grep -q 'frame buffer' "$c/name" 2>/dev/null || continue

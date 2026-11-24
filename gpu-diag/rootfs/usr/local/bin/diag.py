@@ -28,6 +28,31 @@ import urllib.request
 from datetime import datetime, timezone
 
 STATE_FILE = "/share/nvidia/state.json"
+
+
+def use_loaded_branch():
+    """The image has the userspace of both driver branches the driver add-on can load
+    (/opt/nvidia/branches/<version>: 580, 570). Point /opt/nvidia/{VERSION,lib,bin} at the one the
+    kernel has loaded, before any CUDA library is opened. No match: driver_state() reports
+    driver_mismatch."""
+    try:
+        loaded = open("/sys/module/nvidia/version").read().strip()
+    except OSError:
+        return
+    d = f"/opt/nvidia/branches/{loaded}"
+    if not os.path.isdir(d) or os.path.realpath("/opt/nvidia/VERSION") == os.path.realpath(f"{d}/VERSION"):
+        return
+    for n in ("VERSION", "lib", "bin"):
+        tmp = f"/opt/nvidia/{n}.new"
+        if os.path.lexists(tmp):
+            os.remove(tmp)
+        os.symlink(f"branches/{loaded}/{n}", tmp)
+        os.replace(tmp, f"/opt/nvidia/{n}")
+    # libnvidia-gpucomp's soname carries the full version: the loader cache must be rebuilt.
+    subprocess.run(["ldconfig"], check=False)
+
+
+use_loaded_branch()
 NV_VERSION = open("/opt/nvidia/VERSION").read().strip()
 BIN = "/opt/diag/bin"
 OPTS = json.load(open("/data/options.json"))

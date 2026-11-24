@@ -18,8 +18,11 @@ RUN set -eux; \
 FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS driver
 
 # Must match the kernel module the NVIDIA Driver add-on loads (checked at start). Pinned on purpose.
+# Both branches that add-on can load are here (/opt/nvidia/branches/<version>); /opt/nvidia/{lib,bin,
+# VERSION} link to 580, and diag.py relinks them to the loaded one. NV_ALT: "version:sha256".
 ARG NV_VERSION=580.196.07
 ARG NV_SHA256=2189c47fa87ae45b7a166b58c3742dd1629035069cb0fb4103ed375229c55867
+ARG NV_ALT=570.211.01:8b423f751bb7f73a1533c4fed5e97719892b2937abda2828ae0183af3af6314b
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl xz-utils zstd \
@@ -27,17 +30,22 @@ RUN apt-get update \
 
 # Userspace only. No nvidia-modprobe: a consumer never loads the driver or creates nodes.
 RUN set -eux; \
-    cd /tmp; \
-    curl -fsSLo nv.run "https://download.nvidia.com/XFree86/Linux-x86_64/${NV_VERSION}/NVIDIA-Linux-x86_64-${NV_VERSION}-no-compat32.run"; \
-    echo "${NV_SHA256}  nv.run" | sha256sum -c -; \
-    sh nv.run --extract-only --target /tmp/nv; \
-    mkdir -p /opt/nvidia/lib /opt/nvidia/bin; \
-    for l in libcuda libnvidia-ml libnvidia-ptxjitcompiler libnvidia-nvvm libnvidia-gpucomp; do \
-        cp "/tmp/nv/${l}.so.${NV_VERSION}" /opt/nvidia/lib/; \
-    done; \
-    install -m 0755 /tmp/nv/nvidia-smi /opt/nvidia/bin/nvidia-smi; \
-    echo "${NV_VERSION}" > /opt/nvidia/VERSION; \
-    rm -rf /tmp/nv /tmp/nv.run
+    fetch() { \
+        v=$1; d=/opt/nvidia/branches/$1; \
+        curl -fsSLo /tmp/nv.run "https://download.nvidia.com/XFree86/Linux-x86_64/${v}/NVIDIA-Linux-x86_64-${v}-no-compat32.run"; \
+        echo "$2  /tmp/nv.run" | sha256sum -c -; \
+        sh /tmp/nv.run --extract-only --target /tmp/nv; \
+        mkdir -p "$d/lib" "$d/bin"; \
+        for l in libcuda libnvidia-ml libnvidia-ptxjitcompiler libnvidia-nvvm libnvidia-gpucomp; do \
+            cp "/tmp/nv/${l}.so.${v}" "$d/lib/"; \
+        done; \
+        install -m 0755 /tmp/nv/nvidia-smi "$d/bin/nvidia-smi"; \
+        echo "$v" > "$d/VERSION"; \
+        rm -rf /tmp/nv /tmp/nv.run; \
+    }; \
+    fetch "$NV_VERSION" "$NV_SHA256"; \
+    if [ -n "$NV_ALT" ]; then fetch $(echo "$NV_ALT" | tr : ' '); fi; \
+    for n in VERSION lib bin; do ln -s "branches/${NV_VERSION}/$n" "/opt/nvidia/$n"; done
 
 # CUDA 12.8 runtime and cuBLAS, the versions the binaries were built against. No cuDNN.
 FROM nvidia/cuda:12.8.1-base-ubuntu24.04
@@ -58,10 +66,11 @@ RUN set -eux; \
 
 COPY --from=driver /opt/nvidia /opt/nvidia
 COPY --from=fetch /opt/diag /opt/diag
-RUN ln -s /opt/nvidia/bin/nvidia-smi /usr/local/bin/nvidia-smi \
-    && echo /opt/nvidia/lib > /etc/ld.so.conf.d/00-nvidia.conf \
-    && ldconfig \
-    && ln -sf libcuda.so.1 /opt/nvidia/lib/libcuda.so
+RUN set -e; \
+    ln -s /opt/nvidia/bin/nvidia-smi /usr/local/bin/nvidia-smi; \
+    for d in /opt/nvidia/branches/*/lib; do ldconfig -n "$d"; ln -sf libcuda.so.1 "$d/libcuda.so"; done; \
+    echo /opt/nvidia/lib > /etc/ld.so.conf.d/00-nvidia.conf; \
+    ldconfig
 
 COPY rootfs/ /
 RUN chmod 0755 /usr/local/bin/*.py

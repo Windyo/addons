@@ -44,7 +44,7 @@ jobs:
       - name: Build image with ${{ matrix.version }}
         run: |
           docker build --build-arg NV_VERSION=${{ matrix.version }} --build-arg NV_SHA256=${{ steps.run.outputs.sha }} \
-            --build-arg NV_RUN_SUFFIX=${{ steps.run.outputs.suffix }} -t drv:${{ matrix.version }} nvidia-driver
+            --build-arg NV_RUN_SUFFIX=${{ steps.run.outputs.suffix }} --build-arg NV_ALT= -t drv:${{ matrix.version }} nvidia-driver
 
       - name: Compile for 6.18.58-haos
         shell: bash

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Option `driver_branch` (`580` default, `570`): the image carries NVIDIA 570.211.01 next to
+  580.196.07, to test whether the GPU faults are a 580 regression (a report on llama.cpp shows the
+  same Xid 13 types on 580; 570 builds unchanged for 6.18.58). The branch already loaded this boot
+  stays in use; the chosen one is built in the background and loads at the next boot.
+- ACPI tables are read again: the old code read the container's /sys, where Docker hides
+  /sys/firmware ("ACPI tables not readable"). Now through the private sysfs, once per boot, to
+  `/share/nvidia/acpi/` (DSDT, SSDTs and their decompilations).
+
 ## 0.1.10
 
 - Quieter log while HA Core is down. At a host boot the add-on starts about 36 s before Core, and

@@ -1,7 +1,8 @@
 # NVIDIA Driver
 
 Runs the NVIDIA driver on Home Assistant OS so other add-ons can use an NVIDIA GPU. Built for a
-GTX 1070 (Pascal), which needs the **580** driver branch. It is the only add-on that touches the
+GTX 1070 (Pascal), which needs the **580** driver branch (570 is in the image for a test, see
+`driver_branch`). It is the only add-on that touches the
 kernel; GPU add-ons (Whisper CUDA, Ollama CUDA) only read its state and open `/dev/nvidia*`.
 
 ## How it works
@@ -43,6 +44,7 @@ cool threshold.
 
 | Option | Default | Meaning |
 |---|---|---|
+| `driver_branch` | `580` | `570` loads NVIDIA 570.211.01 instead, to test whether the GPU faults are a 580 regression. See below. |
 | `load_driver` | `true` | Off: build and verify only. On: load the driver into the kernel. |
 | `build_jobs` | `4` | Compile jobs for the build. |
 | `retry_after_crash` | `false` | Allow one more load after an attempt that never finished before a reboot. |
@@ -55,6 +57,24 @@ cool threshold.
 | `pcie_watch` | `true` | Timestamp every PCIe link error of the GPU and its port (read and clear the latched bits every 0.5 s). Counts on the sensor (`pcie_watch`), events in the log and in `/share/nvidia/pcie-events.log`. |
 | `pcie_max_gen` | `0` | Cap the GPU's PCIe link at this generation (1-3) through the port's Target Link Speed, as a BIOS "PCIe Gen" setting does. 0 = no cap; it also undoes a cap set earlier in the same boot. Holds from the next speed change (the driver changes speed between idle and load). |
 | `module_params` | `""` | Extra `nvidia.ko` parameters (space-separated `NVreg_...=value`), applied when the add-on loads the driver, i.e. after the next host reboot. |
+
+## Switching the driver branch
+
+1. Set `driver_branch` and restart the add-on. The loaded driver keeps running; the add-on builds
+   the other branch's modules in the background (about 15 min, log: "driver_branch: 570 modules
+   built"; the sensor shows `driver_next_boot`).
+2. Reboot the host. The add-on loads the chosen branch.
+
+Consumers must ship the same userspace version as the loaded module. Whisper CUDA and Ollama CUDA
+ship 580: with 570 loaded they report `driver_mismatch` (Whisper runs on the CPU, Ollama has no
+GPU). GPU Diagnostic ships both and uses the loaded one. Set `580` and reboot to go back.
+
+## ACPI tables
+
+At the first start of each boot the add-on copies the DSDT and SSDT tables (never MSDM or SLIC,
+which hold the Windows licence) to `/share/nvidia/acpi/`, with `iasl` decompilations (`*.dsl`).
+Docker hides `/sys/firmware` in the container, so they are read through the add-on's private
+sysfs mount.
 
 ## Host reset after a lost GPU
 
