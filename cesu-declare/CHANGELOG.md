@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+- Fix: "Nature d'activité principale" was not found because its label holds a help icon, which stopped
+  the run right after the period. Labels are now matched on their own text, so child icons don't hide them,
+  and a label followed by a second line ("Total net déclaré (10 % congés payés inclus)") matches too.
+- The activity is report-only: if it can't be read, the run logs a warning and continues. Its step is now
+  `activity` (it was reported as `period`).
+- The hourly rate field is left with Tab after typing, in case the site computes the total on blur.
+
 ## 0.2.0
 
 - `hours` must now be a whole number, 1 to 200 (the site has no minutes select). The minutes logic is removed.

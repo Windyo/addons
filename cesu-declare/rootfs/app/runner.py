@@ -74,12 +74,16 @@ FORM_MAP_JS = r"""
 
 # Tags the control that belongs to a visible label text (data-cesu-field) so Playwright can use it.
 # Resolution: <label for>/wrapping label, aria-label, else the first matching control after the text.
+# A label's own text nodes are compared, so a help icon inside it ("Nature d'activit\u00e9 principale ?")
+# does not hide it.
 TAG_FIELD_JS = r"""
 ([name, label, selector]) => {
   const norm = t => (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\u2019\u2018]/g, "'").replace(/[*:]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+    .replace(/[\u2019\u2018]/g, "'").replace(/[*:?]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
   const want = norm(label);
   const visible = el => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  const ownText = el => Array.from(el.childNodes).filter(n => n.nodeType === Node.TEXT_NODE)
+    .map(n => n.textContent).join(' ');
   document.querySelectorAll('[data-cesu-field="' + name + '"]').forEach(e => e.removeAttribute('data-cesu-field'));
   const matches = el => el.matches(selector);
   let found = null;
@@ -93,8 +97,10 @@ TAG_FIELD_JS = r"""
   for (const el of document.querySelectorAll(selector)) {
     if (norm(el.getAttribute('aria-label')).startsWith(want) && done(el)) return true;
   }
-  const texts = Array.from(document.querySelectorAll('label, legend, span, div, p, th, td, dt, strong, b'))
-    .filter(e => e.children.length === 0 && norm(e.innerText) === want);
+  // exact own text first, then own text starting with it ("Total net déclaré (10 % congés payés inclus)")
+  const cands = Array.from(document.querySelectorAll('label, legend, span, div, p, th, td, dt, strong, b'))
+    .filter(e => visible(e) && norm(ownText(e)).startsWith(want));
+  const texts = cands.filter(e => norm(ownText(e)) === want).concat(cands.filter(e => norm(ownText(e)) !== want));
   const all = Array.from(document.querySelectorAll(selector)).filter(visible);
   for (const t of texts) {
     const after = all.find(e => (t.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_FOLLOWING) && !t.contains(e));
@@ -345,9 +351,14 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
             if state["period_seen"].lower() != label.lower():
                 raise StepError(f"period shows '{state['period_seen']}' after selecting '{label}'")
 
-            activity = await _read(page, "activity", "Nature d'activité principale")
-            state["activity_seen"] = activity["text"]
-            log.info("activity: %s", activity["text"])
+            # Report only: the site keeps the activity of the last declaration, so a miss is not fatal.
+            state["step"] = "activity"
+            try:
+                activity = await _read(page, "activity", "Nature d'activité principale")
+                state["activity_seen"] = activity["text"]
+                log.info("activity: %s", activity["text"])
+            except StepError as exc:
+                log.warning("activity not read (%s); continuing", exc)
             cap.write_json("form_map.json", {
                 "url": page.url,
                 "title": await page.title(),
@@ -370,7 +381,9 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
             log.info("hours set to %d", hours)
 
             rate_txt = format_rate_fr(req["rate"])
-            await page.get_by_role("textbox", name="Salaire horaire net").fill(rate_txt)
+            rate_box = page.get_by_role("textbox", name="Salaire horaire net")
+            await rate_box.fill(rate_txt)
+            await rate_box.press("Tab")  # leave the field in case the total is computed on blur
             log.info("rate set to %s", rate_txt)
 
             # ---- total check: the site computes it; it must equal hours * rate ----

@@ -3,7 +3,7 @@
 Automates the monthly CESU (URSSAF, France) salary declaration of a household employee on
 <https://www.cesu.urssaf.fr> with a headless Chromium (Playwright).
 
-## Version 0.2.0 is still a dry run
+## Version 0.2.1 is still a dry run
 
 This release is an **explorer**. For each request it logs in, handles the one-time email code, opens
 the declaration form, checks the employee, **selects the period**, fills the whole hours and the net
@@ -114,7 +114,7 @@ Result, `cesu_declare_result`:
 ```
 
 `status` is `dry_run_ok`, `error`, `busy` or `invalid`. `step` names where it stopped (`home`, `login`,
-`otp`, `otp_rejected`, `declare`, `continue`, `form`, `employee`, `period`, `fill`, `total`, `recap`,
+`otp`, `otp_rejected`, `declare`, `continue`, `form`, `employee`, `period`, `activity`, `fill`, `total`, `recap`,
 `request`, `done`). `period_seen`, `employee_seen` and `activity_seen` are the selected option texts;
 `recap_step` is the active stepper text (or the whole stepper), `recap_buttons` the visible buttons and
 links of the main content. On failure the fields known so far are still filled.

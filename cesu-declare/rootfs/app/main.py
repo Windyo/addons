@@ -1,4 +1,4 @@
-"""CESU Declare add-on, v0.2.0: dry-run explorer. Long-running; reads JSON lines on stdin."""
+"""CESU Declare add-on, v0.2.1: dry-run explorer. Long-running; reads JSON lines on stdin."""
 from __future__ import annotations
 
 import asyncio
@@ -232,7 +232,7 @@ async def dispatch_line(line: str, opt, broker: OtpBroker, current: asyncio.Task
 async def main() -> None:
     opt = load_options()
     setup_logging(opt.log_level, opt.secrets)
-    log.info("CESU Declare v0.2.0 started (dry run only; no declaration is ever sent)")
+    log.info("CESU Declare v0.2.1 started (dry run only; no declaration is ever sent)")
     log.info("code source: %s", f"IMAP {opt.imap_host}" if opt.imap_mode else "ask (stdin)")
     cleanup_old_runs()
     broker = OtpBroker()
