@@ -79,7 +79,12 @@ jobs:
             docker run --rm --privileged --entrypoint bash nvidia-driver:test -c '
               mkdir -p /run/t && mount -t tracefs nodev /run/t
               timeout 5 python3 /usr/local/bin/nv-acpi-watch.py /run/t /tmp/s.json /tmp/e.log
-              cat /tmp/s.json' | tee "acpi$i.log"
+              echo "--- kprobe_events:"; cat /run/t/kprobe_events
+              echo "--- error_log:"; tail -n 8 /run/t/error_log
+              echo "--- summary:"; cat /tmp/s.json' > "acpi$i.log" 2>&1 || true
+            cat "acpi$i.log"
+            # The step log needs a GitHub login: put the output in an annotation.
+            echo "::notice title=acpi watcher run $i::$(sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g' "acpi$i.log" | head -c 4000)"
             tail -n 1 "acpi$i.log" | jq -e '.probes.notify == "ok" and (.probes | length) == 3'
           done
 
