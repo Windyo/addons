@@ -254,7 +254,21 @@ if [ "$GPU_STATE" = ready ]; then
   want=$([ "$(opt console_unbind)" = true ] && echo 0 || echo 1)
   SYSRW=/run/nv-sysfs
   mkdir -p "$SYSRW"
-  if mountpoint -q "$SYSRW" || mount -t sysfs sysfs "$SYSRW"; then
+  sysfs_rw() { awk -v m="$SYSRW" '$2 == m {split($4, o, ","); r = o[1]} END {exit r != "rw"}' /proc/mounts; }
+  # Docker mounts the container's sysfs read-only, and a second sysfs mount in the same network
+  # namespace shares that read-only superblock (0.1.8 failed with EROFS). Remount it writable; the
+  # container's own /sys keeps its per-mount read-only flag. Failing that, mount a sysfs tagged with
+  # a new, empty network namespace (PCI devices are not per-namespace).
+  mountpoint -q "$SYSRW" || mount -t sysfs sysfs "$SYSRW" || true
+  if mountpoint -q "$SYSRW" && ! sysfs_rw; then
+    mount -o remount,rw "$SYSRW" 2>/dev/null || true
+    if ! sysfs_rw; then
+      umount "$SYSRW" 2>/dev/null || true
+      unshare -n mount -t sysfs sysfs "$SYSRW" 2>/dev/null || true
+    fi
+  fi
+  log "private sysfs: $(awk -v m="$SYSRW" '$2 == m {print $4}' /proc/mounts | tail -n 1)"
+  if mountpoint -q "$SYSRW" && sysfs_rw; then
     for c in "$SYSRW"/class/vtconsole/vtcon*; do
       grep -q 'frame buffer' "$c/name" 2>/dev/null || continue
       if [ "$(cat "$c/bind")" != "$want" ]; then
@@ -264,14 +278,14 @@ if [ "$GPU_STATE" = ready ]; then
       ATTRS=$(jq -n --argjson a "$ATTRS" --arg b "$(cat "$c/bind")" '$a + {fb_console_bound: ($b == "1")}')
     done
   else
-    log "WARNING: cannot mount a private sysfs (console binding unchanged)"
+    log "WARNING: no writable private sysfs (console binding unchanged)"
   fi
   # PCIe link speed cap (root port Target Link Speed; 0 = leave it, or undo an earlier cap this boot).
   # The driver changes the link speed itself (gen 1 idle, gen 3 under load); the cap holds from the
   # next change. Test for the faults: the link logs correctable errors (receiver error, bad TLP,
   # replay timeout) and the faults come with dense command traffic.
   gpu=$(jq -r '.pci // empty' <<< "$ATTRS")
-  if mountpoint -q "$SYSRW" && [ -n "$gpu" ]; then
+  if mountpoint -q "$SYSRW" && sysfs_rw && [ -n "$gpu" ]; then
     capr=$(python3 /usr/local/bin/nv-pcie.py cap "$gpu" "$SYSRW" "$(opt pcie_max_gen)" "$DATA/pcie-cap.json" 2>&1 | tail -n 1)
     log "pcie_max_gen=$(opt pcie_max_gen): $capr"
     if jq -e . > /dev/null 2>&1 <<< "$capr"; then

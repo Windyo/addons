@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.9
+
+- Fix: the PCIe watcher and `pcie_max_gen` (0.1.8), and `console_unbind` (0.1.7), failed with
+  "Read-only file system". The private sysfs mount shared the read-only superblock Docker created
+  for the container's /sys. The add-on now remounts it writable (or, failing that, mounts a sysfs
+  tied to a new network namespace) and logs the result ("private sysfs: rw,...").
+
 ## 0.1.8
 
 - PCIe link error watcher (option `pcie_watch`, on by default). The GPU and its root port latch
