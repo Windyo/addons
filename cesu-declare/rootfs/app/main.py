@@ -1,4 +1,4 @@
-"""CESU Declare add-on, v0.2.2: dry-run explorer. Long-running; reads JSON lines on stdin."""
+"""CESU Declare add-on, v0.3.0: monthly CESU declaration (dry run by default). Reads JSON lines on stdin."""
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +12,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import ledger
 from config import load_options
 from dispatch import OtpBroker, classify_line
 from logic import RequestError, media_url_path, redact, validate_request
@@ -89,6 +90,9 @@ def result(req: dict | None, status: str, step: str, message: str, **extra) -> d
         "recap_step": extra.get("recap_step", ""),
         "recap_buttons": extra.get("recap_buttons", []),
         "recap_text": extra.get("recap_text", ""),
+        "history_seen": extra.get("history_seen", ""),
+        "recap_values": extra.get("recap_values", {}),
+        "confirm_text": extra.get("confirm_text", ""),
         "screenshot": extra.get("screenshot", ""),
     }
 
@@ -109,7 +113,17 @@ async def ask_for_otp(broker: OtpBroker, req: dict) -> str:
 
 
 async def handle_run(opt, req: dict, broker: OtpBroker) -> None:
-    from runner import run_dry  # imported lazily so a bad browser install only fails runs
+    from runner import run_once  # imported lazily so a bad browser install only fails runs
+
+    if req["dry_run"] is False:
+        entry = ledger.blocking_entry(req["month"])
+        if entry is not None:
+            status = "already_declared" if entry.get("outcome") == "declared" else "invalid"
+            msg = (f"this add-on already clicked 'Enregistrer' for {req['month']} ({entry.get('outcome')}, "
+                   f"{entry.get('at')}); it will not send it again. Check 'Mes déclarations' on the site.")
+            log.warning("refused real run %s: %s", req["request_id"], msg)
+            await asyncio.to_thread(post_event, result(req, status, "already_submitted", msg))
+            return
 
     async def get_otp(since):
         if opt.imap_mode:
@@ -118,7 +132,7 @@ async def handle_run(opt, req: dict, broker: OtpBroker) -> None:
 
     state: dict = {"step": "start"}
     try:
-        outcome = await asyncio.wait_for(run_dry(opt, req, state, get_otp), RUN_TIMEOUT_S)
+        outcome = await asyncio.wait_for(run_once(opt, req, state, get_otp), RUN_TIMEOUT_S)
     except asyncio.TimeoutError:
         outcome = {"status": "error", "step": state["step"], "message": f"run exceeded {RUN_TIMEOUT_S} s"}
     except Exception as exc:  # e.g. browser failed to launch
@@ -133,7 +147,9 @@ async def handle_run(opt, req: dict, broker: OtpBroker) -> None:
                   period_seen=state.get("period_seen", ""), employee_seen=state.get("employee_seen", ""),
                   activity_seen=state.get("activity_seen", ""), total_seen=state.get("total_seen"),
                   recap_step=state.get("recap_step", ""), recap_buttons=state.get("recap_buttons", []),
-                  recap_text=state.get("recap_text", ""), screenshot=shot)
+                  recap_text=state.get("recap_text", ""), history_seen=state.get("history_seen", ""),
+                  recap_values=state.get("recap_values", {}), confirm_text=state.get("confirm_text", ""),
+                  screenshot=shot)
     await asyncio.to_thread(post_event, data)
 
 
@@ -232,7 +248,7 @@ async def dispatch_line(line: str, opt, broker: OtpBroker, current: asyncio.Task
 async def main() -> None:
     opt = load_options()
     setup_logging(opt.log_level, opt.secrets)
-    log.info("CESU Declare v0.2.2 started (dry run only; no declaration is ever sent)")
+    log.info("CESU Declare v0.3.0 started (dry run unless a request says dry_run: false)")
     log.info("code source: %s", f"IMAP {opt.imap_host}" if opt.imap_mode else "ask (stdin)")
     cleanup_old_runs()
     broker = OtpBroker()

@@ -1,10 +1,10 @@
 ---
 name: CESU Declare
-version: 0.2.2
+version: 0.3.0
 slug: cesu_declare
 description: >-
-  Explorer / dry run for the monthly CESU (URSSAF) salary declaration:
-  logs in, selects the period, fills the form, moves to the recap step, captures and stops. Never submits.
+  Monthly CESU (URSSAF) salary declaration: logs in, fills the form, checks the recap, and sends it
+  only when a request says dry_run false (once per month, guarded by a ledger). Dry run by default.
 url: https://github.com/windyo/addons/tree/master/cesu-declare
 arch:
   - amd64

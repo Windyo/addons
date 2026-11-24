@@ -23,7 +23,7 @@ def _is_number(value) -> bool:
 
 
 def validate_request(obj) -> dict:
-    """Return a normalised request or raise RequestError. dry_run is echoed, never acted on."""
+    """Return a normalised request or raise RequestError. dry_run defaults to True; only False declares."""
     if not isinstance(obj, dict):
         raise RequestError("request must be a JSON object")
     request_id = obj.get("request_id")
@@ -169,3 +169,53 @@ def parse_otp(value) -> str:
     if not re.fullmatch(r"\d{6}", text):
         raise OtpFormatError("otp must be exactly 6 digits")
     return text
+
+
+_HISTORY_RE = re.compile(
+    r"mes derni[eè]res d[eé]clarations(.*?)(?:mes salari[eé]s|mes pr[eé]l[eè]vements|ma derni[eè]re connexion|$)",
+    re.I | re.S)
+
+
+def recent_declarations(page_text: str | None) -> str | None:
+    """Text of the dashboard box "Mes dernières déclarations" (whitespace collapsed), None if absent."""
+    m = _HISTORY_RE.search(page_text or "")
+    if not m:
+        return None
+    return " ".join(m.group(1).split())[:500]
+
+
+def declared_in(history: str, period: str, employee: str) -> bool:
+    """True when the box has a row `period` ("Novembre 2026") for an employee containing `employee`.
+
+    Rows read "Octobre 2026 ALEXANDRA GANTIER"; [^0-9] keeps the match inside one row (the next row
+    starts with a year)."""
+    pat = re.escape(period.lower()) + r"\s[^0-9]{0,120}?" + re.escape(employee.lower())
+    return re.search(pat, (history or "").lower()) is not None
+
+
+def _amount_after(text: str, label: str) -> float | None:
+    m = re.search(re.escape(label) + r"\s*:\s*(-?\d[\d\s  .]*(?:,\d+)?)", text, re.I)
+    return parse_fr_number(m.group(1)) if m else None
+
+
+def parse_recap(text: str | None) -> dict:
+    """Values of the recap page ("Heures effectuées : 11 h", "Total net déclaré : 176,00 €", ...)."""
+    text = " ".join((text or "").split())
+    paid = re.search(r"vers[ée] par le Centre national Cesu [àa] votre salari[ée] le (\d{2}/\d{2}/\d{4})", text, re.I)
+    return {
+        "hours": _amount_after(text, "Heures effectuées"),
+        "rate": _amount_after(text, "Salaire horaire net"),
+        "total": _amount_after(text, "Total net déclaré"),
+        "net_to_pay": _amount_after(text, "Salaire net à verser"),
+        "contributions": _amount_after(text, "Montant des cotisations"),
+        "paid_on": paid.group(1) if paid else "",
+    }
+
+
+def recap_problem(recap: dict, hours: int, rate: float) -> str:
+    """'' when the recap shows exactly the requested hours, rate and total; else what differs."""
+    want_rate = float(Decimal(str(rate)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    checks = (("hours", hours), ("rate", want_rate), ("total", expected_total(hours, rate)))
+    bad = [f"{k} {recap.get(k)} != {v}" for k, v in checks
+           if recap.get(k) is None or abs(recap[k] - v) > 0.005]
+    return "; ".join(bad)

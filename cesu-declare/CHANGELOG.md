@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0
+
+- **Real declarations.** A request with `dry_run: false` ticks the validation checkbox and clicks
+  *Enregistrer ma déclaration* once, then waits for the step *Envoyée*. Result `status: declared`.
+- Before opening the form, the dashboard box *Mes dernières déclarations* is read; a month already listed
+  for the employee stops the run with `status: already_declared`. A real run refuses if the box is missing.
+- The recap is checked: hours, hourly rate and total must equal the request; exactly one validation checkbox
+  and one enabled submit button must exist (dry runs check this too).
+- Ledger `/data/submitted.json`: the month is recorded before the click; a real run for a recorded month is
+  refused (`already_submitted`). An unreadable ledger refuses every real run.
+- Result event adds `history_seen`, `recap_values` (hours, rate, total, net to pay, contributions, payment
+  date) and `confirm_text`.
+
 ## 0.2.2
 
 - Fix: with a stored session still valid, "Se connecter" on the public home page leads straight to the

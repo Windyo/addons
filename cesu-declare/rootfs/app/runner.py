@@ -1,8 +1,9 @@
-"""One dry-run through the CESU declaration form with Playwright.
+"""One run through the CESU declaration form with Playwright.
 
-v0.2 is an explorer: it clicks only the navigation controls needed to reach the form and the
-recap step (login, code check, declare, continue, next step), selects the period, fills hours and
-rate, checks the computed total, captures the recap page, and stops. Nothing is ever sent.
+Logs in, stops if the dashboard already lists the month, selects the period, fills hours and rate,
+checks the computed total, moves to the recap step and checks it. A dry run stops there. A real run
+(request dry_run false) ticks the validation checkbox, records the month in the ledger, clicks
+"Enregistrer ma déclaration" once and waits for the "Envoyée" step.
 """
 from __future__ import annotations
 
@@ -16,12 +17,17 @@ from pathlib import Path
 
 from playwright.async_api import Page, async_playwright
 
+import ledger
 from config import Options
 from logic import (
+    declared_in,
     expected_total,
     format_rate_fr,
     parse_fr_number,
+    parse_recap,
     period_label,
+    recap_problem,
+    recent_declarations,
     redact,
     utc_now,
 )
@@ -151,6 +157,27 @@ RECAP_JS = r"""
 """
 
 
+# Recap page: tags the one checkbox whose label or nearby text is "Je valide ces informations ..."
+# (data-cesu-field="consent"). Returns how many candidates were found; only 1 is usable.
+CONSENT_JS = r"""
+() => {
+  const norm = t => (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  document.querySelectorAll('[data-cesu-field="consent"]').forEach(e => e.removeAttribute('data-cesu-field'));
+  const hits = Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(cb => {
+    const texts = cb.labels ? Array.from(cb.labels).map(l => l.innerText) : [];
+    for (let p = cb.parentElement, i = 0; p && i < 3; p = p.parentElement, i++) texts.push(p.innerText);
+    return texts.some(t => norm(t).includes('je valide ces informations'));
+  });
+  if (hits.length === 1) hits[0].setAttribute('data-cesu-field', 'consent');
+  return hits.length;
+}
+"""
+
+SUBMIT_NAME = "Enregistrer ma déclaration"
+SENT_RE = re.compile(r"bien [ée]t[ée] (enregistr|envoy|transmis|pris)|a [ée]t[ée] (enregistr|envoy|transmis)", re.I)
+CONFIRM_TIMEOUT_S = 60
+
+
 class StepError(Exception):
     pass
 
@@ -214,17 +241,79 @@ async def _read(page: Page, name: str, label: str, selector: str = "select") -> 
     return await (await _field(page, name, label, selector)).evaluate(READ_FIELD_JS)
 
 
-async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
-    """Execute the explorer.
+async def _submit_controls(page: Page):
+    """(consent checkbox, submit button) of the recap page, or raise StepError."""
+    n = await page.evaluate(CONSENT_JS)
+    if n != 1:
+        raise StepError(f"expected 1 'Je valide ces informations' checkbox on the recap, found {n}")
+    button = page.get_by_role("button", name=SUBMIT_NAME, exact=True)
+    if await button.count() != 1 or not await button.is_visible() or not await button.is_enabled():
+        raise StepError(f"'{SUBMIT_NAME}' is not a single visible, enabled button")
+    return page.locator('[data-cesu-field="consent"]'), button
+
+
+async def _visible_texts(page: Page, selector: str) -> list[str]:
+    loc = page.locator(selector)
+    out = []
+    for i in range(await loc.count()):
+        el = loc.nth(i)
+        if await el.is_visible():
+            t = " ".join((await el.inner_text()).split())
+            if t:
+                out.append(t)
+    return out
+
+
+async def _wait_sent(page: Page, alerts_before: list[str]) -> tuple[str, str]:
+    """After the submit click: ("sent" | "dialog" | "alert" | "unknown", page or dialog text)."""
+    deadline = time.monotonic() + CONFIRM_TIMEOUT_S
+    text = ""
+    while time.monotonic() < deadline:
+        await page.wait_for_timeout(1000)
+        try:
+            info = await page.evaluate(RECAP_JS)
+            dialogs = await _visible_texts(page, '[role="dialog"], [role="alertdialog"]')
+            alerts = [a for a in await _visible_texts(page, '[role="alert"]') if a not in alerts_before]
+        except Exception:
+            continue  # the page is navigating
+        text = info["text"]
+        if "envoy" in info["active"].lower() or SENT_RE.search(text) or any(SENT_RE.search(d) for d in dialogs):
+            return "sent", " ".join([text] + dialogs)
+        if dialogs:
+            return "dialog", " | ".join(dialogs)
+        if alerts:
+            return "alert", " | ".join(alerts)
+    return "unknown", text
+
+
+async def _logout(page: Page, context) -> None:
+    try:
+        await context.storage_state(path=str(STATE_PATH))
+        logout = page.get_by_role("link", name="Se déconnecter")
+        if await logout.count() == 1 and await logout.is_visible():
+            await logout.click()
+            await _settle(page)
+            log.info("logged out")
+        else:
+            log.info("no unambiguous logout link; closing the browser")
+    except Exception as exc:
+        log.warning("logout skipped: %s", type(exc).__name__)
+
+
+async def run_once(opt: Options, req: dict, state: dict, get_otp) -> dict:
+    """Execute one request (dry run, or a real declaration when req["dry_run"] is False).
 
     `get_otp(since)` is an async callable returning the 6-digit code. `state` is updated in place
     (step, period_seen, ...) so the caller can report the last known step even if cancelled."""
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     cap = Capture(CAPTURE_ROOT / run_ts)
     state.update(step="start", period_seen="", employee_seen="", activity_seen="", total_seen=None,
-                 recap_step="", recap_buttons=[], recap_text="", capture=cap)
+                 history_seen="", recap_step="", recap_buttons=[], recap_text="", recap_values={},
+                 confirm_text="", capture=cap)
     secrets = opt.secrets
-    log.info("run %s: month=%s hours=%s rate=%s (dry run)", req["request_id"], req["month"], req["hours"], req["rate"])
+    real = req["dry_run"] is False
+    log.info("run %s: month=%s hours=%s rate=%s (%s)", req["request_id"], req["month"], req["hours"], req["rate"],
+             "REAL declaration" if real else "dry run")
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
@@ -310,6 +399,18 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
             STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
             await context.storage_state(path=str(STATE_PATH))
             os.chmod(STATE_PATH, 0o600)
+
+            # ---- already declared? (dashboard box "Mes dernières déclarations") ----
+            state["step"] = "history"
+            history = recent_declarations(await page.locator("body").inner_text())
+            state["history_seen"] = history or ""
+            log.info("recent declarations: %s", history if history is not None else "(box not found)")
+            if history is None and real:
+                raise StepError("'Mes dernières déclarations' not found on the dashboard; not declaring blind")
+            if history and declared_in(history, period_label(req["month"]), opt.employee_name):
+                await _logout(page, context)
+                return {"status": "already_declared", "step": "history",
+                        "message": f"the dashboard already lists {period_label(req['month'])} for {opt.employee_name}"}
 
             # ---- open the form ----
             state["step"] = "declare"
@@ -417,7 +518,7 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
             log.info("total %.2f matches %d h x %s", total, hours, rate_txt)
             _timing("fill", t0)
 
-            # ---- next step: the recap page (the only forward click; nothing is sent) ----
+            # ---- next step: the recap page (nothing is sent by this click) ----
             state["step"] = "recap"
             t0 = time.monotonic()
             await page.get_by_role("button", name="Étape suivante", exact=True).click()
@@ -430,23 +531,56 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
             state["recap_buttons"] = [redact(b, secrets) for b in recap["buttons"]][:40]
             state["recap_text"] = redact(recap["text"], secrets)[:2000]
             log.info("recap step: %s; buttons: %s", state["recap_step"], state["recap_buttons"])
+            values = parse_recap(recap["text"])
+            state["recap_values"] = values
+            log.info("recap values: %s", values)
+            problem = recap_problem(values, hours, req["rate"])
+            if problem:
+                raise StepError(f"recap does not match the request: {problem}")
+            consent, submit = await _submit_controls(page)
             _timing("recap", t0)
 
-            # ---- stop: nothing is sent ----
-            state["step"] = "done"
+            if not real:
+                state["step"] = "done"
+                await _logout(page, context)
+                return {"status": "dry_run_ok", "step": "done",
+                        "message": "recap checked, checkbox and submit button found; nothing sent"}
+
+            # ---- real declaration: one click, recorded in the ledger before it happens ----
+            state["step"] = "submit"
             try:
-                await context.storage_state(path=str(STATE_PATH))
-                logout = page.get_by_role("link", name="Se déconnecter")
-                if await logout.count() == 1 and await logout.is_visible():
-                    await logout.click()
-                    await _settle(page)
-                    log.info("logged out")
-                else:
-                    log.info("no unambiguous logout link; closing the browser")
+                await consent.check(timeout=10_000)
+            except Exception:
+                await consent.evaluate("el => { if (!el.checked) el.click(); }")  # styled, hidden input
+            if not await consent.is_checked():
+                raise StepError("the 'Je valide ces informations' checkbox could not be ticked")
+            alerts_before = await _visible_texts(page, '[role="alert"]')
+            ledger.record(req["month"], "clicked", request_id=req["request_id"], hours=hours, rate=req["rate"])
+            state["step"] = "confirm"
+            log.info("clicking '%s' for %s", SUBMIT_NAME, req["month"])
+            await submit.click()
+            outcome, text = await _wait_sent(page, alerts_before)
+            ledger.record(req["month"], {"sent": "declared"}.get(outcome, outcome), request_id=req["request_id"],
+                          hours=hours, rate=req["rate"])
+            state["confirm_text"] = redact(text, secrets)[:2000]
+            log.info("after submit: %s", outcome)
+            try:
+                await cap.shot(page, {"sent": "sent", "dialog": "dialog", "alert": "submit-alert"}.get(outcome, "unconfirmed"))
             except Exception as exc:
-                log.warning("logout skipped: %s", type(exc).__name__)
-            return {"status": "dry_run_ok", "step": "done",
-                    "message": "recap page reached and captured; nothing sent"}
+                log.error("could not capture the page after submit: %s", type(exc).__name__)
+            if outcome == "sent":
+                state["step"] = "done"
+                await _logout(page, context)
+                return {"status": "declared", "step": "done", "message": "declaration sent (step 'Envoyée' reached)"}
+            if outcome == "dialog":
+                return {"status": "error", "step": "confirm_dialog",
+                        "message": "a dialog appeared after the click and nothing more was clicked: "
+                                   + state["confirm_text"][:200]}
+            check = "Check 'Mes déclarations' on the site; the add-on will not send this month again."
+            if outcome == "alert":
+                return {"status": "error", "step": "submit", "message": f"the site answered: {state['confirm_text'][:200]}. {check}"}
+            return {"status": "error", "step": "confirm",
+                    "message": f"clicked but no confirmation within {CONFIRM_TIMEOUT_S} s. {check}"}
         except Exception as exc:
             step = state["step"]
             msg = redact(f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}", secrets)[:300]
