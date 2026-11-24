@@ -9,6 +9,9 @@ ARG NV_VERSION=580.196.07
 ARG NV_SHA256=2189c47fa87ae45b7a166b58c3742dd1629035069cb0fb4103ed375229c55867
 # "-no-compat32" or "" (some older releases only ship the plain .run). CI builds other branches.
 ARG NV_RUN_SUFFIX=-no-compat32
+# Second branch in the image, "version:sha256:suffix" ("" for none): 570, to test whether the GPU
+# faults are a 580 regression. The driver_branch option picks one at start (nv-branch.sh).
+ARG NV_ALT=570.211.01:8b423f751bb7f73a1533c4fed5e97719892b2937abda2828ae0183af3af6314b:-no-compat32
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8
@@ -21,20 +24,29 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Proprietary kernel module sources (Pascal is not supported by the open modules) and the
-# userspace nvidia-smi needs. No libcuda: this add-on never runs CUDA.
+# userspace nvidia-smi needs, per branch in /opt/nvidia/branches/<version>/{kernel-src,lib,bin,VERSION}.
+# /opt/nvidia/{kernel-src,lib,bin,VERSION} link to the branch in use. No libcuda: this add-on never
+# runs CUDA.
 RUN set -eux; \
-    cd /tmp; \
-    curl -fsSLo nv.run "https://download.nvidia.com/XFree86/Linux-x86_64/${NV_VERSION}/NVIDIA-Linux-x86_64-${NV_VERSION}${NV_RUN_SUFFIX}.run"; \
-    echo "${NV_SHA256}  nv.run" | sha256sum -c -; \
-    sh nv.run --extract-only --target /tmp/nv; \
-    mkdir -p /opt/nvidia/lib; \
-    cp -a /tmp/nv/kernel /opt/nvidia/kernel-src; \
-    cp "/tmp/nv/libnvidia-ml.so.${NV_VERSION}" /opt/nvidia/lib/; \
-    install -m 0755 /tmp/nv/nvidia-smi /usr/local/bin/nvidia-smi; \
+    fetch() { \
+        v=$1; d=/opt/nvidia/branches/$1; \
+        curl -fsSLo /tmp/nv.run "https://download.nvidia.com/XFree86/Linux-x86_64/${v}/NVIDIA-Linux-x86_64-${v}${3:-}.run"; \
+        echo "$2  /tmp/nv.run" | sha256sum -c -; \
+        sh /tmp/nv.run --extract-only --target /tmp/nv; \
+        mkdir -p "$d/lib" "$d/bin"; \
+        cp -a /tmp/nv/kernel "$d/kernel-src"; \
+        cp "/tmp/nv/libnvidia-ml.so.${v}" "$d/lib/"; \
+        ln -s "libnvidia-ml.so.${v}" "$d/lib/libnvidia-ml.so.1"; \
+        install -m 0755 /tmp/nv/nvidia-smi "$d/bin/nvidia-smi"; \
+        echo "$v" > "$d/VERSION"; \
+        rm -rf /tmp/nv /tmp/nv.run; \
+    }; \
+    fetch "$NV_VERSION" "$NV_SHA256" "$NV_RUN_SUFFIX"; \
+    if [ -n "$NV_ALT" ] && [ "${NV_ALT%%:*}" != "$NV_VERSION" ]; then fetch $(echo "$NV_ALT" | tr : ' '); fi; \
+    for n in VERSION kernel-src lib bin; do ln -s "branches/${NV_VERSION}/$n" "/opt/nvidia/$n"; done; \
+    ln -s /opt/nvidia/bin/nvidia-smi /usr/local/bin/nvidia-smi; \
     echo /opt/nvidia/lib > /etc/ld.so.conf.d/nvidia.conf; \
-    ldconfig; \
-    echo "${NV_VERSION}" > /opt/nvidia/VERSION; \
-    rm -rf /tmp/nv /tmp/nv.run
+    ldconfig
 
 COPY rootfs/ /
 RUN chmod 0755 /usr/local/bin/*.sh

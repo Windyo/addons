@@ -1,6 +1,6 @@
 ---
 name: NVIDIA Driver
-version: 0.1.10
+version: 0.2.0
 slug: nvidia-driver
 description: >-
   Builds, loads and monitors the NVIDIA driver on HAOS (Pascal / driver 580) and publishes the
@@ -37,6 +37,7 @@ homeassistant_api: true
 # Reads the installed HAOS version (/os/info) to fetch that release's kernel patches.
 hassio_api: true
 options:
+  driver_branch: "580"
   load_driver: true
   build_jobs: 4
   retry_after_crash: false
@@ -50,6 +51,7 @@ options:
   pcie_watch: true
   pcie_max_gen: 0
 schema:
+  driver_branch: list(580|570)
   load_driver: bool
   build_jobs: int(1,8)
   retry_after_crash: bool

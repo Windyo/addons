@@ -5,6 +5,7 @@ A throw-away add-on that answers one question: when llama.cpp (inside Ollama) fa
 llama.cpp kernels, the card under full load, or Ollama's build?
 
 Start it by hand with the NVIDIA Driver add-on `ready` and the GPU cool. It runs once and exits.
+It works with either driver branch that add-on can load (580 or 570, option `driver_branch`).
 
 | Stage | What | A failure means |
 |---|---|---|

@@ -4,6 +4,7 @@
 #   nv-build-modules.sh <kernel-release> <kernel-config[.gz]> <out-dir> [jobs] [patch-dir]
 #
 # patch-dir: HAOS's own kernel patches (buildroot-external/patches/linux), applied in order.
+# NV_ROOT: the driver branch to build (default /opt/nvidia, the one in use).
 #
 # The HAOS kernel has MODVERSIONS and MODULE_FORCE_LOAD off, so a module loads only if its
 # vermagic matches the running kernel exactly. We therefore build against the upstream source
@@ -17,7 +18,8 @@ KCONFIG=${2:?kernel config path}
 OUT=${3:?output dir}
 JOBS=${4:-4}
 PATCHES=${5:-}
-NV_VERSION=$(cat /opt/nvidia/VERSION)
+NV_ROOT=${NV_ROOT:-/opt/nvidia}
+NV_VERSION=$(cat "$NV_ROOT/VERSION")
 ALLOW=/usr/local/share/nvidia-driver/config-drift-allow.txt
 
 KVER=${KREL%%-*}
@@ -85,7 +87,8 @@ cp "$K/vmlinux.symvers" "$K/Module.symvers"
 grep -q $'\tvmlinux\t' "$K/Module.symvers" || { echo "ERROR: Module.symvers has no vmlinux exports"; exit 5; }
 
 step "Building NVIDIA ${NV_VERSION} (nvidia, nvidia-uvm)"
-cp -a /opt/nvidia/kernel-src "$WORK/nv"
+mkdir -p "$WORK/nv"
+cp -a "$NV_ROOT/kernel-src/." "$WORK/nv/"
 # Branches before 560 pass their include paths and defines through EXTRA_CFLAGS, which kernels
 # >= 6.15 no longer read (580 uses ccflags-y). Same rename NVIDIA made; a no-op for 580.
 if grep -qw EXTRA_CFLAGS "$WORK/nv/Kbuild"; then
