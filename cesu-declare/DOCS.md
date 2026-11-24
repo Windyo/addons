@@ -114,6 +114,8 @@ employee and activity selected), `form_map_declare.json`, `form_map_otp.json`, `
 `form_map_recap.json`. In a dry run the last screenshot, `NN-recap.png`, is the recap page; a real run adds
 `NN-sent.png` (or `NN-dialog`, `NN-submit-alert`, `NN-unconfirmed`).
 On failure an `NN-error.png/.html` is added. Folders older than 90 days are deleted at start.
+After every run the last screenshot is also copied to `/media/cesu/latest.png`
+(`media-source://media_source/local/cesu/latest.png`), so a dashboard picture card can show it.
 
 Screenshots show the employer's account pages. Treat the folder as private.
 

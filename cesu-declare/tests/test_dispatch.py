@@ -104,3 +104,17 @@ def test_split_json_objects_partial_nested_and_string():
     assert split_json_objects('{"a": {"b"') == ([], '{"a": {"b"')
     assert split_json_objects('{"otp": "12') == ([], '{"otp": "12')
     assert split_json_objects('{bad} {"a": 1}') == (['{bad} ', '{"a": 1}'], "")
+
+
+def test_publish_latest_replaces_atomically(tmp_path):
+    from main import publish_latest
+    run = tmp_path / "20261124T204658Z"
+    run.mkdir()
+    (run / "07-sent.png").write_bytes(b"new")
+    latest = tmp_path / "latest.png"
+    latest.write_bytes(b"old")
+    publish_latest(run / "07-sent.png", latest)
+    assert latest.read_bytes() == b"new"
+    assert not (tmp_path / "latest.png.tmp").exists()
+    publish_latest(run / "missing.png", latest)  # logged, never raises
+    assert latest.read_bytes() == b"new"

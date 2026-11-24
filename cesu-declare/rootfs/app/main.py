@@ -1,4 +1,4 @@
-"""CESU Declare add-on, v0.3.1: monthly CESU declaration (dry run by default). Reads JSON lines on stdin."""
+"""CESU Declare add-on, v0.3.2: monthly CESU declaration (dry run by default). Reads JSON lines on stdin."""
 from __future__ import annotations
 
 import asyncio
@@ -24,6 +24,7 @@ RUN_TIMEOUT_S = 900
 OTP_ASK_TIMEOUT_S = 300
 RETENTION_DAYS = 90
 CAPTURE_ROOT = Path("/media/cesu")
+LATEST_PNG = CAPTURE_ROOT / "latest.png"
 
 
 class RedactFilter(logging.Filter):
@@ -58,6 +59,16 @@ def cleanup_old_runs(root: Path = CAPTURE_ROOT, days: int = RETENTION_DAYS) -> N
         if when < cutoff:
             shutil.rmtree(d, ignore_errors=True)
             log.info("deleted old capture folder %s", d.name)
+
+
+def publish_latest(png: Path, latest: Path = LATEST_PNG) -> None:
+    """Copy the run's last screenshot to a fixed path (a dashboard picture card shows it)."""
+    tmp = latest.with_name(latest.name + ".tmp")
+    try:
+        shutil.copyfile(png, tmp)
+        os.replace(tmp, latest)
+    except OSError as exc:
+        log.error("could not update %s: %s", latest.name, type(exc).__name__)
 
 
 def post_event(data: dict, event: str = "cesu_declare_result") -> None:
@@ -143,6 +154,7 @@ async def handle_run(opt, req: dict, broker: OtpBroker) -> None:
     shot = ""
     if cap is not None and cap.last_png is not None:
         shot = media_url_path(str(cap.last_png))
+        publish_latest(cap.last_png)
     data = result(req, outcome["status"], outcome["step"], outcome["message"],
                   period_seen=state.get("period_seen", ""), employee_seen=state.get("employee_seen", ""),
                   activity_seen=state.get("activity_seen", ""), total_seen=state.get("total_seen"),
@@ -248,7 +260,7 @@ async def dispatch_line(line: str, opt, broker: OtpBroker, current: asyncio.Task
 async def main() -> None:
     opt = load_options()
     setup_logging(opt.log_level, opt.secrets)
-    log.info("CESU Declare v0.3.1 started (dry run unless a request says dry_run: false)")
+    log.info("CESU Declare v0.3.2 started (dry run unless a request says dry_run: false)")
     log.info("code source: %s", f"IMAP {opt.imap_host}" if opt.imap_mode else "ask (stdin)")
     cleanup_old_runs()
     broker = OtpBroker()

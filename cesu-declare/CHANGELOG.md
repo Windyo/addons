@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- After every run the last screenshot is copied to `/media/cesu/latest.png` (atomic replace), for a
+  dashboard picture card. Media-browser deep links can't be opened from Android notifications
+  (the companion app decodes `%2F` in `clickAction`), so the notification opens a dashboard instead.
+
 ## 0.3.1
 
 - Fix: the public home page can show the logged-in header (name, *Déconnexion*, *Tableau de bord*) with
