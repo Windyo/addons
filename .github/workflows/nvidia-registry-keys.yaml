@@ -16,7 +16,9 @@ jobs:
     timeout-minutes: 60
     env:
       # Last or late release of each branch that supports Pascal. A missing version is skipped.
-      VERSIONS: "470.256.02 525.147.05 535.247.01 550.163.01 570.211.01 580.95.05 580.196.07"
+      # 470-570 were surveyed in run 45365745525; GitHub's 10-annotation cap dropped both 580 rows
+      # there, so this run lists the driver in use only, in chunks (one category per step).
+      VERSIONS: "580.196.07"
     steps:
       - name: Extract and list keys
         shell: bash
@@ -54,6 +56,24 @@ jobs:
             rm -rf x nv.run
           done
           ls -la out
+
+      - name: "580: power/clock/perf keys"
+        shell: bash
+        run: |
+          f=out/580.196.07.power.txt; [ -s "$f" ] || { echo "::warning::no $f"; exit 0; }
+          tr '\n' ' ' < "$f" | fold -s -w 1800 | nl -w1 -s' ' | while read -r n rest; do
+            echo "::notice title=580 power/clock/perf $n::$rest"; done
+
+      - name: "580: gating, idle, clock, voltage keys"
+        shell: bash
+        run: |
+          f=out/580.196.07.all.txt; [ -s "$f" ] || { echo "::warning::no $f"; exit 0; }
+          grep -iE 'elpg|mscg|lpwr|psi|gc6|gc5|gpcpg|grpg|powergat|pwrgat|clkgat|clockgat|blcg|slcg|flcg|elcg|lowpower|deepidle|idle|ppg|sramgat|railgat|vrm' "$f" \
+            | grep -viE 'perf' | tr '\n' ' ' | fold -s -w 1800 | nl -w1 -s' ' | while read -r n rest; do
+            echo "::notice title=580 gating/idle $n::$rest"; done
+          grep -iE 'clk|clock|freq|volt|vdd|droop|nafll|adc|vfe|vfield|pstate|pcie.*(gen|speed)|linkspeed|gen[0-9]' "$f" \
+            | grep -viE 'perf|elpg|lpwr' | tr '\n' ' ' | fold -s -w 1800 | nl -w1 -s' ' | while read -r n rest; do
+            echo "::notice title=580 clock/volt/pcie $n::$rest"; done
 
       - name: Cross-version table
         shell: bash
