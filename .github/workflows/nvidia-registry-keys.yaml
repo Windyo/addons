@@ -1,0 +1,69 @@
+name: nvidia-registry-keys
+
+# Read-only survey for the GTX 1070 fault work: which power/clock/perf registry keys does each
+# NVIDIA driver branch's closed resource manager (nv-kernel.o_binary) still contain? Decides whether
+# a performance pin or clock offset exists on 580 (module_params) or needs an older branch.
+# Output: job summary + artifact (per-version key lists and a cross-version table).
+on:
+  push:
+    paths:
+      - ".github/workflows/nvidia-registry-keys.yaml"
+  workflow_dispatch:
+
+jobs:
+  survey:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # Last or late release of each branch that supports Pascal. A missing version is skipped.
+      VERSIONS: "470.256.02 525.147.05 535.247.01 550.163.01 570.211.01 580.95.05 580.196.07"
+    steps:
+      - name: Extract and list keys
+        run: |
+          set -u
+          mkdir -p out
+          for v in $VERSIONS; do
+            url="https://download.nvidia.com/XFree86/Linux-x86_64/$v/NVIDIA-Linux-x86_64-$v.run"
+            if ! curl -fsSLo nv.run "$url"; then
+              url="https://download.nvidia.com/XFree86/Linux-x86_64/$v/NVIDIA-Linux-x86_64-$v-no-compat32.run"
+              curl -fsSLo nv.run "$url" || { echo "$v: not downloadable, skipped" | tee -a out/skipped.txt; continue; }
+            fi
+            rm -rf x && sh nv.run --extract-only --target x > /dev/null
+            blob=$(find x/kernel -name 'nv-kernel.o_binary' | head -1)
+            [ -n "$blob" ] || { echo "$v: no nv-kernel.o_binary" | tee -a out/skipped.txt; continue; }
+            # Identifier-like strings only; registry keys are plain ASCII names.
+            strings -n 6 "$blob" | grep -E '^[A-Za-z][A-Za-z0-9_]{5,63}$' | sort -u > "out/$v.all.txt"
+            grep -iE 'powermizer|perflevel|perf_?level|pstate|perfcap|maxperf|minperf|boost|overclock|clkoffset|clock.?offset|vfoffset|undervolt|voltage|gpcclk|mclk|memclk|elpg|gpcpg|lpwr|powergat|adaptive|thermal|slowdown|pwrcap|powerlimit|powercap|perf' \
+              "out/$v.all.txt" > "out/$v.power.txt" || true
+            echo "$v: $(wc -l < "out/$v.all.txt") identifiers, $(wc -l < "out/$v.power.txt") power/clock/perf"
+            rm -rf x nv.run
+          done
+
+      - name: Cross-version table
+        run: |
+          cd out
+          vs=$(ls *.power.txt 2>/dev/null | sed 's/\.power\.txt$//' | sort -V)
+          cat *.power.txt | sort -u > union.txt
+          {
+            echo "## Power/clock/perf identifiers in nv-kernel.o_binary"
+            echo
+            printf '| key |'; for v in $vs; do printf ' %s |' "$v"; done; echo
+            printf '|---|'; for v in $vs; do printf '---|'; done; echo
+            while read -r k; do
+              printf '| `%s` |' "$k"
+              for v in $vs; do grep -qxF "$k" "$v.power.txt" && printf ' x |' || printf '  |'; done
+              echo
+            done < union.txt
+            echo
+            echo "### Must-know keys"
+            for k in PowerMizerEnable PowerMizerLevel PowerMizerDefault PowerMizerDefaultAC PerfLevelSrc OverrideMaxPerf RMPerfLimits RMDisableGpuBoost; do
+              printf -- '- `%s`:' "$k"; for v in $vs; do grep -qxF "$k" "$v.all.txt" && printf ' %s' "$v"; done; echo
+            done
+            [ -s skipped.txt ] && { echo; echo "### Skipped"; sed 's/^/- /' skipped.txt; }
+          } > table.md
+          cat table.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nvidia-registry-keys
+          path: out/
