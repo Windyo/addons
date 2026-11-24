@@ -343,9 +343,18 @@ async def run_once(opt: Options, req: dict, state: dict, get_otp) -> dict:
             t0 = time.monotonic()
             declare_link = page.get_by_role("link", name="Déclarer")
             login_link = page.get_by_role("link", name="Se connecter")
-            seen = await _first_visible(page, {"in": declare_link, "out": login_link}, 20)
+            dashboard_link = page.get_by_role("link", name="Tableau de bord")
+            seen = await _first_visible(page, {"in": declare_link, "out": login_link, "dash": dashboard_link}, 20)
             if seen is None:
-                raise StepError("home page shows neither 'Se connecter' nor 'Déclarer'")
+                raise StepError("home page shows neither 'Se connecter', 'Déclarer' nor 'Tableau de bord'")
+            if seen == "dash":
+                # The public home page can show the logged-in header (name, Déconnexion, Tableau de bord)
+                # without a 'Déclarer' link: go to the dashboard.
+                await dashboard_link.first.click()
+                await _settle(page)
+                if await _first_visible(page, {"in": declare_link}, 30) != "in":
+                    raise StepError("'Tableau de bord' did not lead to a page with 'Déclarer'")
+                seen = "in"
             if seen == "out":
                 await login_link.first.click()
                 await _settle(page)

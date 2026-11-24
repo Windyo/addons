@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- Fix: the public home page can show the logged-in header (name, *Déconnexion*, *Tableau de bord*) with
+  neither *Se connecter* nor *Déclarer*; the first real run stopped there at step `login` (nothing sent).
+  *Tableau de bord* now counts as logged in and leads to the dashboard.
+
 ## 0.3.0
 
 - **Real declarations.** A request with `dry_run: false` ticks the validation checkbox and clicks

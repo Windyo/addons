@@ -21,6 +21,7 @@ def test_every_click_is_known():
     clicks = [line.strip() for line in RUNNER.splitlines() if ".click(" in line]
     assert clicks == [
         "await logout.click()",  # _logout
+        "await dashboard_link.first.click()",
         "await login_link.first.click()",
         'await page.get_by_role("button", name="Vérifier").click()',
         "await declare_link.first.click()",
