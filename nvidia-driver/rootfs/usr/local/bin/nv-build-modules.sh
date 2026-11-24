@@ -86,6 +86,12 @@ grep -q $'\tvmlinux\t' "$K/Module.symvers" || { echo "ERROR: Module.symvers has 
 
 step "Building NVIDIA ${NV_VERSION} (nvidia, nvidia-uvm)"
 cp -a /opt/nvidia/kernel-src "$WORK/nv"
+# Branches before 560 pass their include paths and defines through EXTRA_CFLAGS, which kernels
+# >= 6.15 no longer read (580 uses ccflags-y). Same rename NVIDIA made; a no-op for 580.
+if grep -qw EXTRA_CFLAGS "$WORK/nv/Kbuild"; then
+  step "Kbuild: EXTRA_CFLAGS -> ccflags-y (pre-6.15 build files)"
+  sed -i 's/\bEXTRA_CFLAGS\b/ccflags-y/g' "$WORK/nv/Kbuild" "$WORK"/nv/*/*.Kbuild
+fi
 # GCC 13.3 here vs 13.4 for the kernel: same major, bug-fix release apart.
 nice -n 19 make -C "$WORK/nv" -j"$JOBS" SYSSRC="$K" NV_KERNEL_MODULES="nvidia nvidia-uvm" \
   IGNORE_CC_MISMATCH=1 modules

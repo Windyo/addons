@@ -9,6 +9,7 @@ on:
   push:
     paths:
       - ".github/workflows/nvidia-driver-branches.yaml"
+      - "nvidia-driver/rootfs/usr/local/bin/nv-build-modules.sh"
   workflow_dispatch:
 
 permissions:
