@@ -76,8 +76,16 @@ def count_key(ev):
 
 
 def write(path, text, mode="w"):
-    with open(path, mode) as f:
-        f.write(text)
+    """mode "a" appends without a seek: Python's append mode seeks to the end at open, which tracefs
+    command files (kprobe_events) refuse with EINVAL. "w" truncates, as `echo >` does."""
+    if mode == "a":
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND)
+    else:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    try:
+        os.write(fd, text.encode())
+    finally:
+        os.close(fd)
 
 
 def cleanup(t, inst):
