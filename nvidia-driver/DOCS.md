@@ -48,4 +48,20 @@ cool threshold.
 | `retry_after_crash` | `false` | Allow one more load after an attempt that never finished before a reboot. |
 | `hot_c` | `85` | GPU temperature at which consumers back off. |
 | `cool_c` | `78` | Temperature at which they return. |
+| `auto_recover` | `false` | When the GPU falls off the bus (Xid 79) and stays gone 2 minutes, reset the host (see below). |
 | `module_params` | `""` | Extra `nvidia.ko` parameters (space-separated `NVreg_...=value`), applied when the add-on loads the driver, i.e. after the next host reboot. |
+
+## Host reset after a lost GPU
+
+After Xid 79 ("GPU has fallen off the bus") the processes using the GPU hang inside the driver and
+can't be killed. A normal reboot then never completes, because the Supervisor waits for their
+containers to stop. The add-on bypasses that: SysRq sync and read-only remount, then a full
+platform reset through port CF9h, which also cuts the GPU's power, and the machine restarts by
+itself. Unsaved data from the last seconds can be lost; the file systems recover at boot.
+
+- Manual: call `hassio.addon_stdin` with `addon: 8634c18d_nvidia-driver` and `input: host-reset`.
+  This resets the host whatever the GPU state, so use it only when the GPU is lost.
+- Automatic: switch on `auto_recover`.
+
+At most 2 resets per 24 hours. Every reset is listed in `/share/nvidia/host-resets.log`, and the
+last one is shown as `last_host_reset` on `sensor.nvidia_gpu_status`.

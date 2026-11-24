@@ -30,3 +30,9 @@ configuration:
       Extra nvidia.ko parameters, space-separated, e.g.
       NVreg_RegistryDwords=PowerMizerEnable=0x1;PerfLevelSrc=0x2222. Empty by default.
       They apply when this add-on loads the driver, i.e. after the next host reboot.
+  auto_recover:
+    name: Reset the host when the GPU is lost
+    description: >-
+      When the GPU falls off the bus (Xid 79) and stays gone for 2 minutes, flush the disks and
+      do a full platform reset, which power-cycles the GPU. A normal reboot hangs in that state.
+      At most twice per 24 hours. Off by default.

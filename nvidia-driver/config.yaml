@@ -21,9 +21,14 @@ kernel_modules: true
 privileged:
   - SYS_MODULE
   - MKNOD
-  # mount the kernel's devtmpfs to create /dev/nvidia* (the add-on's /dev is read-only)
+  # mount the kernel's devtmpfs to create /dev/nvidia* (the add-on's /dev is read-only), and a
+  # private /proc for SysRq (host reset)
   - SYS_ADMIN
+  # /dev/port: CF9h full platform reset when the GPU has wedged the host (nv-host-reset.sh)
+  - SYS_RAWIO
 apparmor: false
+# "host-reset" via hassio.addon_stdin
+stdin: true
 # /share/nvidia/state.json: the contract GPU consumers read.
 map:
   - share:rw
@@ -38,10 +43,12 @@ options:
   hot_c: 85
   cool_c: 78
   module_params: ""
+  auto_recover: false
 schema:
   load_driver: bool
   build_jobs: int(1,8)
   retry_after_crash: bool
   hot_c: int(70,95)
   cool_c: int(60,90)
+  auto_recover: bool
   module_params: match(^(NVreg_[A-Za-z0-9]+=[A-Za-z0-9_.;=]+( |$))*$)

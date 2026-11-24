@@ -23,6 +23,7 @@ RETRY=$(opt retry_after_crash)
 # they take effect at the next host boot, not on a driver that is already loaded.
 export NV_MODULE_PARAMS
 NV_MODULE_PARAMS=$(opt module_params)
+AUTO_RECOVER=$(opt auto_recover)
 HOT_C=$(opt hot_c)
 COOL_C=$(opt cool_c)
 BOOT=$(cat /proc/sys/kernel/random/boot_id)
@@ -244,7 +245,39 @@ kernel_gpu_lines() {
 # Thermal policy (laptop GPU): hot at HOT_C or on a hardware thermal slowdown, ok again at COOL_C.
 # Consumers follow "thermal" (Whisper moves to the CPU, Ollama refuses chats). Sustained load on
 # this machine reached 97 C and eventually dropped the GPU off the PCIe bus (2026-10-25).
+# ---- host reset (nv-host-reset.sh) ------------------------------------------------------------
+# After Xid 79 the GPU's users hang in the kernel and a normal reboot never completes. A reset is
+# allowed at most twice per 24 h, so a fault that comes back at every boot can't loop the host.
+RESETS="$DATA/host-resets"
+host_reset() {   # host_reset <reason>
+  local now recent
+  now=$(date +%s)
+  recent=$(awk -v t=$((now - 86400)) '$1 > t' "$RESETS" 2>/dev/null | wc -l)
+  if [ "$recent" -ge 2 ]; then
+    log "host reset refused ($1): already $recent in the last 24 h"
+    return 1
+  fi
+  echo "$now $1" >> "$RESETS"
+  publish host_reset "$(jq -n --argjson a "$ATTRS" --arg r "$1" '$a + {host_reset_reason: $r}')"
+  /usr/local/bin/nv-host-reset.sh "$1"
+}
+
+# stdin commands (hassio.addon_stdin): "host-reset" resets the host now, whatever the GPU state.
+( while IFS= read -r cmd; do
+    case "$cmd" in
+      host-reset) host_reset "manual (stdin)" ;;
+      "") ;;
+      *) log "stdin: unknown command '$cmd' (known: host-reset)" ;;
+    esac
+  done ) &
+
+if [ -s /share/nvidia/host-resets.log ]; then
+  log "previous host resets: $(tail -n 3 /share/nvidia/host-resets.log | tr '\n' ';')"
+  ATTRS=$(jq -n --argjson a "$ATTRS" --arg l "$(tail -n 1 /share/nvidia/host-resets.log)" '$a + {last_host_reset: $l}')
+fi
+
 trap 'exit 0' TERM INT
+LOST_SINCE=""
 q=name,memory.total,memory.used,temperature.gpu,power.draw,pstate,utilization.gpu,clocks.sm,clocks_event_reasons.active
 n=0
 fails=0
@@ -280,6 +313,16 @@ while true; do
         log_platform_state
       fi
     fi
+  fi
+  # auto_recover: the GPU is gone (Xid 79 / 154 in the kernel log) and still gone 2 minutes later.
+  if [ "$AUTO_RECOVER" = true ] && [ "$GPU_STATE" = gpu_error ] \
+     && kernel_gpu_lines | grep -qE 'Xid \(PCI:[^)]*\): (79|154),|fallen off the bus'; then
+    LOST_SINCE=${LOST_SINCE:-$(date +%s)}
+    if [ $(( $(date +%s) - LOST_SINCE )) -ge 120 ]; then
+      host_reset "auto: GPU lost (Xid 79/154)" || AUTO_RECOVER=refused
+    fi
+  else
+    LOST_SINCE=""
   fi
   write_state
   touch "$HEARTBEAT"

@@ -2,6 +2,13 @@
 
 ## 0.1.5
 
+- Host reset for a wedged GPU. After Xid 79 the GPU's users hang inside the driver, the Supervisor's
+  reboot waits forever on their container, and only a power cycle at the machine helped. The add-on
+  can now flush the disks, remount them read-only and do a full platform reset (CF9h, which also
+  cuts the GPU's power) without going through userspace. Manual: send `host-reset` to the add-on's
+  stdin (`hassio.addon_stdin`). Automatic: option `auto_recover` (off by default) resets when the GPU
+  has been lost for 2 minutes. At most 2 resets per 24 h. Needs the new `SYS_RAWIO` privilege.
+
 - New option `module_params` (empty by default): extra `nvidia.ko` parameters such as
   `NVreg_RegistryDwords=...`, used when the add-on loads the driver (so from the next host boot).
 - At start and when the GPU stops answering, logs read-only platform state: PCIe link speed/width,
