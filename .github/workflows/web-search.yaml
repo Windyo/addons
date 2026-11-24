@@ -55,7 +55,7 @@ jobs:
                       out = (await s.call_tool("web_search", {"query": "capitale de la France"})).content[0].text
                       print(out); assert 0 < len(out) <= 2600
                       # Answer quality, read by a human in the log (results vary, so no assert).
-                      for q in ("What's the current stock price of Nvidia?", "current temperature in Albuquerque",
+                      for q in ("What's the current stock price of Nvidia?", "current temperature in Albuquerque", "cours de l'action Airbus",
                                 "résultat du dernier match du PSG", "who won the last Formula 1 race"):
                           t0 = time.monotonic()
                           out = (await s.call_tool("web_search", {"query": q})).content[0].text
