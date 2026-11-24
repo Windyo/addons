@@ -13,6 +13,7 @@ import ipaddress
 import json
 import re
 import socket
+import time
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -36,6 +37,10 @@ FR_WORDS = set("le la les des du de un une est sont qui quel quelle quels quelle
 EN_WORDS = set("the an of in at for to is are was were what what's who who's when where why how which "
                "today yesterday tomorrow weather score price stock current latest news and with this "
                "that".split())
+# A stock question gets a live quote first: finance pages put the price in a table row that names
+# neither the company nor "stock", so page excerpts miss it (CI 2026-11-24 got only a price target).
+STOCK = re.compile(r"\b(stocks?|shares?|share price|quote|nasdaq|nyse|ticker|cours|actions?|bourse)\b", re.I)
+YAHOO = "https://query1.finance.yahoo.com"
 # Query words that say nothing about which passage holds the answer.
 NOT_TERMS = set("les des une est sont qui quel quelle quels quelles quand combien comment pourquoi "
                 "aujourd'hui hier demain dans sur pour avec cette actuel actuelle dernier dernière "
@@ -86,6 +91,38 @@ def excerpt(text, terms):
     return " ".join(part for _, part in sorted(picked))
 
 
+async def stock_quote(query, terms):
+    """'Live quote NVDA (NVIDIA Corporation, NasdaqGS): 165.03 USD, +1.20 % today, last trade …', or ''."""
+    name = " ".join(sorted(terms - {"stock", "stocks", "share", "shares", "price", "quote", "cours",
+                                    "action", "actions", "bourse", "prix", "valeur"}, key=query.lower().find))
+    if not name:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=EXCERPT_TIMEOUT, headers={"User-Agent": "Mozilla/5.0"}) as client:
+            r = await client.get(f"{YAHOO}/v1/finance/search", params={"q": name, "quotesCount": 3, "newsCount": 0})
+            r.raise_for_status()
+            # Only a quote whose name or symbol is in the question ("actions pour économiser" ≠ shares).
+            hits = [q for q in r.json().get("quotes", []) if q.get("quoteType") in ("EQUITY", "ETF", "INDEX")
+                    and any(w in f"{q.get('symbol', '')} {q.get('longname', '')} {q.get('shortname', '')}".lower()
+                            for w in name.split())]
+            if not hits:
+                return ""
+            symbol = hits[0]["symbol"]
+            r = await client.get(f"{YAHOO}/v8/finance/chart/{symbol}", params={"range": "1d", "interval": "1d"})
+            r.raise_for_status()
+            meta = r.json()["chart"]["result"][0]["meta"]
+    except Exception:  # best effort, like the page excerpts
+        return ""
+    price, prev = meta.get("regularMarketPrice"), meta.get("chartPreviousClose") or meta.get("previousClose")
+    if price is None:
+        return ""
+    change = f", {100 * (price - prev) / prev:+.2f} % today" if prev else ""
+    when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(meta["regularMarketTime"])) if meta.get("regularMarketTime") else ""
+    label = hits[0].get("longname") or hits[0].get("shortname") or ""
+    return f"Live quote {symbol} ({label}, {meta.get('exchangeName', '')}): {price} {meta.get('currency', '')}{change}" + \
+        (f", last trade {when}" if when else "")
+
+
 async def page_excerpt(url, terms):
     try:  # best effort: a slow, blocked or unparsable page just adds nothing
         text = await asyncio.wait_for(page_text(url), EXCERPT_TIMEOUT)
@@ -115,9 +152,12 @@ async def web_search(query: str) -> str:
             results.append(res)
     results = results[:MAX_RESULTS]
     terms = {w for w in re.findall(r"\w+", query.lower()) if len(w) > 2 and w not in NOT_TERMS}
-    excerpts = await asyncio.gather(*(page_excerpt(res["url"], terms) for res in results[:EXCERPT_PAGES]))
+    quote, *excerpts = await asyncio.gather(
+        stock_quote(query, terms) if STOCK.search(query) else asyncio.sleep(0, ""),
+        *(page_excerpt(res["url"], terms) for res in results[:EXCERPT_PAGES]))
 
-    lines = [cap(a, SNIPPET) for a in data.get("answers", []) if isinstance(a, str)][:1]
+    lines = [quote] if quote else []
+    lines += [cap(a, SNIPPET) for a in data.get("answers", []) if isinstance(a, str)][:1]
     for box in data.get("infoboxes", [])[:1]:
         if box.get("content"):
             lines.append(f"{box.get('infobox', '')} — {cap(box['content'], SNIPPET)}")
