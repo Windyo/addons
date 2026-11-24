@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- Fix: with a stored session still valid, "Se connecter" on the public home page leads straight to the
+  dashboard, and the run timed out waiting for the login form. It now accepts either the dashboard
+  (skips the login) or the form.
+
 ## 0.2.1
 
 - Fix: "Nature d'activité principale" was not found because its label holds a help icon, which stopped

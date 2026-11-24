@@ -1,6 +1,6 @@
 ---
 name: CESU Declare
-version: 0.2.1
+version: 0.2.2
 slug: cesu_declare
 description: >-
   Explorer / dry run for the monthly CESU (URSSAF) salary declaration:

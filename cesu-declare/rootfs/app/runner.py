@@ -255,13 +255,22 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
             declare_link = page.get_by_role("link", name="Déclarer")
             login_link = page.get_by_role("link", name="Se connecter")
             seen = await _first_visible(page, {"in": declare_link, "out": login_link}, 20)
-            if seen == "in":
-                log.info("already logged in (stored session)")
-            elif seen == "out":
+            if seen is None:
+                raise StepError("home page shows neither 'Se connecter' nor 'Déclarer'")
+            if seen == "out":
                 await login_link.first.click()
                 await _settle(page)
-                await cap.shot(page, "login-form")
-                await page.get_by_role("textbox", name="Identifiant").fill(opt.cesu_login)
+                await cap.shot(page, "login-page")
+                # The public home page shows "Se connecter" even when the stored session is still
+                # valid; the click then lands on the dashboard instead of the login form.
+                login_box = page.get_by_role("textbox", name="Identifiant")
+                seen = await _first_visible(page, {"in": declare_link, "form": login_box}, 30)
+                if seen is None:
+                    raise StepError("neither the login form nor the dashboard appeared after 'Se connecter'")
+            if seen == "in":
+                log.info("already logged in (stored session)")
+            else:
+                await login_box.fill(opt.cesu_login)
                 await page.get_by_role("textbox", name="Mot de passe").fill(opt.cesu_password)
                 since = utc_now()  # taken just before pressing Enter on the password
                 await page.get_by_role("textbox", name="Mot de passe").press("Enter")
@@ -296,8 +305,6 @@ async def run_dry(opt: Options, req: dict, state: dict, get_otp) -> dict:
                             state["step"] = "otp_rejected"
                             raise StepError("otp_rejected: the site did not accept the code")
                         raise StepError("code entered but the logged-in page did not appear")
-            else:
-                raise StepError("home page shows neither 'Se connecter' nor 'Déclarer'")
             _timing("login", t0)
             await cap.shot(page, "logged-in")
             STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
