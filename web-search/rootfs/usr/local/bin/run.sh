@@ -15,6 +15,8 @@ use_default_settings:
     keep_only: [duckduckgo, brave, bing, qwant, wikipedia, wikidata, bing news, qwant news]
 general:
   instance_name: home-web-search
+  # Wikipedia and Wikidata refuse to load without a contact (Wikimedia User-Agent policy).
+  contact_url: https://github.com/windyo/addons
 server:
   bind_address: 127.0.0.1
   port: 8888
