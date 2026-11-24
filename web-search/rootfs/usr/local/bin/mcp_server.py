@@ -3,10 +3,13 @@
 
 Two tools, sized for a 4B model. Output is capped here because Home Assistant truncates nothing:
 - web_search(query): top results from the local SearXNG plus the passages of the top pages that
-  match the query (a 4B model can't answer from landing-page snippets), 2600 characters at most.
-- read_page(url): the main text of one public web page, 4000 characters at most.
-read_page only fetches public http(s) addresses: the LLM reads untrusted web text, so it must
+  match the query (a 4B model can't answer from landing-page snippets), each result with its URL,
+  2600 characters at most. An empty search is retried once with the key words only.
+- read_page(url, question): the passages of one page about the question (or its start), 2000
+  characters at most: the second step when the first passages didn't hold the answer.
+Pages are only fetched from public http(s) addresses: the LLM reads untrusted web text, so it must
 never be steered into the internal network (Supervisor, Home Assistant, other add-ons).
+One log line per call (engines that answered or failed, timings), for diagnosis.
 """
 import asyncio
 import ipaddress
@@ -14,7 +17,7 @@ import json
 import re
 import socket
 import time
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
 import httpx
 import trafilatura
@@ -23,9 +26,9 @@ from mcp.server.fastmcp import FastMCP
 SEARXNG = "http://127.0.0.1:8888/search"
 OPTS = json.load(open("/data/options.json"))
 MAX_RESULTS = 5
-SNIPPET = 240
+SNIPPET = 180
 SEARCH_CAP = 2600
-PAGE_CAP = 4000
+READ_CAP = 2000
 PAGE_BYTES = 2_000_000
 TIMEOUT = 10
 EXCERPT_PAGES = 3     # top results read by web_search, in parallel
@@ -45,7 +48,8 @@ YAHOO = "https://query1.finance.yahoo.com"
 NOT_TERMS = set("les des une est sont qui quel quelle quels quelles quand combien comment pourquoi "
                 "aujourd'hui hier demain dans sur pour avec cette actuel actuelle dernier dernière "
                 "the was were what what's who who's when where why how which today yesterday tomorrow "
-                "current latest now and with this that".split())
+                "current latest now and with this that about from there their into over "
+                "derniers dernières autour quoi chez vers depuis".split())
 
 kwargs = {"host": "0.0.0.0", "port": 8765, "stateless_http": True, "json_response": True}
 try:  # internal-only server reached by hostname: no DNS-rebinding host check
@@ -70,7 +74,24 @@ def cap(text, limit):
     return text if len(text) <= limit else text[: limit - 1].rsplit(" ", 1)[0] + "…"
 
 
-def excerpt(text, terms):
+def log(msg):
+    print(f"[{time.strftime('%H:%M:%S', time.gmtime())}] {msg}", flush=True)
+
+
+def clean_url(url):
+    """Without tracking parameters, and short: the model reads it, and may pass it to read_page."""
+    u = urlparse(url)
+    q = [(k, v) for k, v in parse_qsl(u.query, keep_blank_values=True)
+         if not k.lower().startswith(("utm_", "fbclid", "gclid", "mc_", "ref", "src"))]
+    out = u._replace(query=urlencode(q), fragment="").geturl()
+    return out if len(out) <= 140 else u._replace(query="", fragment="").geturl()
+
+
+def key_terms(text):
+    return [w for w in dict.fromkeys(re.findall(r"\w+", text.lower())) if len(w) > 2 and w not in NOT_TERMS]
+
+
+def excerpt(text, terms, limit=EXCERPT_CAP):
     """The sentences of a page that mention the query's terms, best first, numbers preferred.
     A sentence with a number right after a matching one is kept too ("NVIDIA stock." "Closed at 182")."""
     parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+|\n+", text) if 15 <= len(p.strip()) <= 400]
@@ -84,7 +105,7 @@ def excerpt(text, terms):
             scored.append((1, i, part))
     picked, size = [], 0
     for _, i, part in sorted(scored, key=lambda x: (-x[0], x[1])):
-        if size + len(part) > EXCERPT_CAP:
+        if size + len(part) > limit:
             continue
         picked.append((i, part))
         size += len(part) + 1
@@ -131,14 +152,8 @@ async def page_excerpt(url, terms):
     return excerpt(text, terms)
 
 
-@mcp.tool()
-async def web_search(query: str) -> str:
-    """Search the web. Use it for anything current or that you may not know: news, prices, stock
-    quotes, exchange rates, weather anywhere, sports results, opening hours, events, people, and
-    anything that happened after your training. Never answer that you have no real-time data: call
-    this tool instead. Returns passages read from the top pages, then the results as
-    "title — snippet — site"."""
-    params = {"q": query, "format": "json", "language": language(query), "safesearch": 1}
+async def searx(query, lang):
+    params = {"q": query, "format": "json", "language": lang, "safesearch": 1}
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         r = await client.get(SEARXNG, params=params)
         r.raise_for_status()
@@ -150,8 +165,37 @@ async def web_search(query: str) -> str:
         if u.scheme in ("http", "https") and u.netloc and key not in seen:
             seen.add(key)
             results.append(res)
+    return data, results
+
+
+def engines(data, results):
+    ok = sorted({e for r in data.get("results", []) for e in r.get("engines", [])})
+    failed = [f"{n}: {why}" for n, why in data.get("unresponsive_engines", [])]
+    return ok, failed
+
+
+@mcp.tool()
+async def web_search(query: str) -> str:
+    """Search the web. Use it for anything current or that you may not know: news, prices, stock
+    quotes, exchange rates, weather anywhere, sports results, opening hours, events, people, and
+    anything that happened after your training. Never answer that you have no real-time data: call
+    this tool instead. Returns passages read from the top pages, then the results as
+    "title — snippet — URL"."""
+    t0 = time.monotonic()
+    lang = language(query)
+    data, results = await searx(query, lang)
+    ok, failed = engines(data, results)
+    retry = ""
+    if not results:
+        # Seen 2026-11-24: the same questions gave results in the morning and "No results." at
+        # noon (engines failing). The key words alone, any language, usually still find something.
+        retry = " ".join(key_terms(query)) or query
+        data, results = await searx(retry, "all")
+        ok2, failed2 = engines(data, results)
+        ok, failed = sorted(set(ok) | set(ok2)), failed + [f"retry {f}" for f in failed2]
+    t_search = time.monotonic() - t0
     results = results[:MAX_RESULTS]
-    terms = {w for w in re.findall(r"\w+", query.lower()) if len(w) > 2 and w not in NOT_TERMS}
+    terms = set(key_terms(query))
     quote, *excerpts = await asyncio.gather(
         stock_quote(query, terms) if STOCK.search(query) else asyncio.sleep(0, ""),
         *(page_excerpt(res["url"], terms) for res in results[:EXCERPT_PAGES]))
@@ -165,9 +209,14 @@ async def web_search(query: str) -> str:
         if text:
             lines.append(f"From {urlparse(res['url']).netloc.removeprefix('www.')}: {text}")
     for res in results:
-        site = urlparse(res["url"]).netloc.removeprefix("www.")
-        lines.append(f"{res.get('title', '').strip()} — {cap((res.get('content') or '').strip(), SNIPPET)} — {site}")
-    return cap("\n".join(lines), SEARCH_CAP) if lines else "No results."
+        lines.append(f"{res.get('title', '').strip()} — {cap((res.get('content') or '').strip(), SNIPPET)}"
+                     f" — {clean_url(res['url'])}")
+    out = cap("\n".join(lines), SEARCH_CAP) if lines else "No results."
+    log(f"search {query!r} [{lang}]{f' retry {retry!r}' if retry else ''}: {len(results)} results, "
+        f"{sum(bool(e) for e in excerpts)} excerpts, quote={'yes' if quote else 'no'}, {len(out)} chars, "
+        f"search {t_search:.1f} s, total {time.monotonic() - t0:.1f} s; engines {', '.join(ok) or 'none'}"
+        f"{'; failed ' + '; '.join(failed) if failed else ''}")
+    return out
 
 
 async def public_url(url):
@@ -206,13 +255,23 @@ async def page_text(url):
 
 
 @mcp.tool()
-async def read_page(url: str) -> str:
-    """Read the main text of one web page found by web_search (first 4000 characters)."""
+async def read_page(url: str, question: str = "") -> str:
+    """Read one page from web_search's results when its passages didn't contain the answer.
+    Give the page's URL and the user's question; returns the parts of the page about the question."""
+    t0 = time.monotonic()
     try:
         text = await page_text(url)
     except (ValueError, httpx.HTTPError, OSError) as e:
+        log(f"read {url} failed: {e}")
         return f"Could not read the page: {e}"
-    return cap(text, PAGE_CAP) if text else "No readable text on this page."
+    if not text:
+        log(f"read {url}: no readable text")
+        return "No readable text on this page."
+    part = excerpt(text, set(key_terms(question)), READ_CAP) if question else ""
+    out = part or cap(text, READ_CAP)
+    log(f"read {url} q={question!r}: {len(text)} chars on page, returned {len(out)}"
+        f"{' (start of page)' if not part else ''}, {time.monotonic() - t0:.1f} s")
+    return out
 
 
 if __name__ == "__main__":

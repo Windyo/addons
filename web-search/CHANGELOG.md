@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+- Each result now ends with its URL (tracking parameters stripped), and `read_page(url, question)`
+  returns the parts of that page about the question (≤ 2000 chars) instead of the first 4000
+  characters: the model can read further when the first passages lack the answer.
+- An empty search is retried once with the key words only, in any language: on 2026-11-24 the same
+  questions gave results in the morning and "No results." at noon.
+- One log line per call: query, language, retry, results, excerpts, quote, size, timings, engines
+  that answered and engines that failed.
+
 ## 0.2.0
 
 - `web_search` reads the top 3 result pages in parallel (4 s each) and adds the sentences that

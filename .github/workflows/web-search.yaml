@@ -54,6 +54,13 @@ jobs:
                       assert names == ["web_search", "read_page"], names
                       out = (await s.call_tool("web_search", {"query": "capitale de la France"})).content[0].text
                       print(out); assert 0 < len(out) <= 2600
+                      # read_page on a real result URL, focused on the question (the model's second step).
+                      import re
+                      url = re.search(r"https?://\S+", (await s.call_tool("web_search", {"query": "Jordan Bardella latest news"})).content[0].text).group(0)
+                      t0 = time.monotonic()
+                      page = (await s.call_tool("read_page", {"url": url, "question": "What is the latest news about Jordan Bardella?"})).content[0].text
+                      print(f"::notice title=read_page {url}::" + f"{time.monotonic() - t0:.1f} s, {len(page)} chars%0A" + page.replace("%", "%25").replace("\n", "%0A"))
+                      assert 0 < len(page) <= 2000, len(page)
                       # Answer quality, read by a human in the log (results vary, so no assert).
                       for q in ("What's the current stock price of Nvidia?", "current temperature in Albuquerque", "cours de l'action Airbus",
                                 "résultat du dernier match du PSG", "who won the last Formula 1 race"):
