@@ -9,19 +9,28 @@ log() { echo "[$(date -u +%H:%M:%S)] $*"; }
 opt() { jq -r ".$1" /data/options.json; }
 
 # publish <state> [json-attributes]
-# Writes the add-on status to Home Assistant (needs homeassistant_api: true).
+# Writes the add-on status to Home Assistant (needs homeassistant_api: true). Core comes up after
+# the add-on at boot (the Supervisor answers 502 until then): one line when publishing starts
+# failing, one when it works again, nothing in between.
 publish() {
-  local state=$1 attrs=${2:-'{}'}
+  local state=$1 attrs=${2:-'{}'} code rc
   [ "$state" = "${_LAST_STATE:-}" ] || log "status: $state"
   _LAST_STATE=$state
   [ -n "${SUPERVISOR_TOKEN:-}" ] || return 0
-  jq -n --arg s "$state" --argjson a "$attrs" --arg k "$(uname -r)" --arg d "$NV_VERSION" \
+  if code=$(jq -n --arg s "$state" --argjson a "$attrs" --arg k "$(uname -r)" --arg d "$NV_VERSION" \
     '{state: $s, attributes: ({friendly_name: "NVIDIA GPU status", icon: "mdi:expansion-card",
        kernel: $k, driver: $d, updated: (now | todate)} + $a)}' \
-    | curl -fsS -m 10 -X POST \
+    | curl -fs -m 10 -o /dev/null -w '%{http_code}' -X POST \
         -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" -H "Content-Type: application/json" \
-        -d @- "http://supervisor/core/api/states/${STATUS_ENTITY}" > /dev/null \
-    || log "WARNING: could not publish status"
+        -d @- "http://supervisor/core/api/states/${STATUS_ENTITY}"); then
+    [ -z "${_PUBLISH_ERR:-}" ] || log "HA Core reachable again, status published"
+    _PUBLISH_ERR=""
+  else
+    rc=$?
+    [ "$rc" = 22 ] && code="HTTP $code" || code="curl error $rc"
+    [ -n "${_PUBLISH_ERR:-}" ] || log "WARNING: HA Core not reachable ($code), status not published yet"
+    _PUBLISH_ERR=1
+  fi
 }
 
 # tail_json <file> [lines] -> JSON string with the last lines of a log
