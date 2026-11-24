@@ -228,6 +228,25 @@ if [ "$GPU_STATE" = ready ]; then
   ATTRS=$(jq -n --argjson a "$ATTRS" --arg d "$dmi" --arg l "$lgc" \
     '$a + {platform: $d, clock_lock_test: $l}')
   log_platform_state
+  # Text console on the GPU: efifb draws the console into the start of BAR1 (the CPU's window into
+  # VRAM). The driver should keep that range mapped to the console's own memory; if it doesn't, every
+  # cursor blink and console line writes into whatever the driver mapped there. console_unbind
+  # detaches the console from the framebuffer (screen stops showing text); off rebinds it.
+  want=$([ "$(opt console_unbind)" = true ] && echo 0 || echo 1)
+  SYSRW=/run/nv-sysfs
+  mkdir -p "$SYSRW"
+  if mountpoint -q "$SYSRW" || mount -t sysfs sysfs "$SYSRW"; then
+    for c in "$SYSRW"/class/vtconsole/vtcon*; do
+      grep -q 'frame buffer' "$c/name" 2>/dev/null || continue
+      if [ "$(cat "$c/bind")" != "$want" ]; then
+        echo "$want" > "$c/bind" 2>/dev/null && log "console $(basename "$c"): bind=$want" \
+          || log "WARNING: could not set $(basename "$c") bind=$want"
+      fi
+      ATTRS=$(jq -n --argjson a "$ATTRS" --arg b "$(cat "$c/bind")" '$a + {fb_console_bound: ($b == "1")}')
+    done
+  else
+    log "WARNING: cannot mount a private sysfs (console binding unchanged)"
+  fi
   # Clock offsets (NVML, no X): probe what the card accepts, apply the configured ones (0 = none).
   clk=$(python3 /usr/local/bin/nv-clocks.py "$(opt core_offset_mhz)" "$(opt mem_offset_mhz)" 2>&1 | tail -n 1)
   log "clock offsets: $clk"

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.7
+
+- Option `console_unbind` (off by default): detaches the text console from the EFI framebuffer,
+  which draws into the start of the GPU's BAR1. Test for the GPU faults: if the driver did not keep
+  that range for the console, cursor blinks and console lines write into memory the driver mapped
+  there (e.g. a new CUDA program's command buffers). `fb_console_bound` on the sensor.
+
 ## 0.1.6
 
 - Clock offsets through NVML (no X server needed): options `core_offset_mhz` (-500..0) and
