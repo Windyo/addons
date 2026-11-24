@@ -84,6 +84,18 @@ make -C "$K" -s modules_prepare
 cp "$K/vmlinux.symvers" "$K/Module.symvers"
 grep -q $'\tvmlinux\t' "$K/Module.symvers" || { echo "ERROR: Module.symvers has no vmlinux exports"; exit 5; }
 
+# Older branches call timer functions that newer kernels renamed (6.15: del_timer* -> timer_delete*;
+# 6.16: from_timer -> timer_container_of). Rename only when the kernel lacks the old names.
+if ! grep -qw del_timer_sync "$K/include/linux/timer.h" && grep -rqw del_timer_sync "$WORK/nv"; then
+  step "timer API: del_timer[_sync] -> timer_delete[_sync]"
+  grep -rlw -e del_timer_sync -e del_timer "$WORK/nv" --include='*.c' --include='*.h' \
+    | xargs sed -i 's/\bdel_timer_sync(/timer_delete_sync(/g; s/\bdel_timer(/timer_delete(/g'
+fi
+if ! grep -qw from_timer "$K/include/linux/timer.h" && grep -rqw from_timer "$WORK/nv"; then
+  step "timer API: from_timer -> timer_container_of"
+  grep -rlw from_timer "$WORK/nv" --include='*.c' --include='*.h' | xargs sed -i 's/\bfrom_timer(/timer_container_of(/g'
+fi
+
 step "Building NVIDIA ${NV_VERSION} (nvidia, nvidia-uvm)"
 cp -a /opt/nvidia/kernel-src "$WORK/nv"
 # Branches before 560 pass their include paths and defines through EXTRA_CFLAGS, which kernels

@@ -62,7 +62,9 @@ jobs:
             n=$(grep -c 'error:' "$RUNNER_TEMP/out/build.log")
             errs=$(grep -E 'error:|Error [0-9]|ERROR' "$RUNNER_TEMP/out/build.log" | sed 's#.*/kernel-src/##;s#^/tmp/nvbuild/nv/##' | sort -u | head -n 40 \
               | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')
-            echo "::error title=$v fails ($n compile errors, rc $rc)::$errs"
+            # A branch that doesn't compile yet is a result of this survey, not a CI failure.
+            echo "::warning title=$v does not compile yet ($n errors, rc $rc)::$errs"
             tail -n 60 "$RUNNER_TEMP/out/build.log"
           fi
-          exit $rc
+          # Only a broken toolchain/kernel tree (no compile attempt at all) fails the job.
+          grep -q 'Building NVIDIA' "$RUNNER_TEMP/out/build.log"
