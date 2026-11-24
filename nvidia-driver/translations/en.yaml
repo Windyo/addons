@@ -49,3 +49,14 @@ configuration:
     description: >-
       The boot console (efifb) draws into the GPU's memory window. On: detach it, so nothing but
       the NVIDIA driver writes there (the laptop screen stops showing console text). Off: reattach.
+  pcie_watch:
+    name: Watch PCIe link errors
+    description: >-
+      Every 0.5 s, read and clear the latched link error bits of the GPU and its PCIe port. Each
+      error is logged with its time and link speed, counted on the sensor and written to
+      /share/nvidia/pcie-events.log.
+  pcie_max_gen:
+    name: PCIe speed cap (generation)
+    description: >-
+      Highest PCIe generation the GPU's link may use: 1 = 2.5 GT/s, 2 = 5 GT/s, 3 = 8 GT/s. 0 = no
+      cap (and undoes a cap set earlier in this boot). Holds from the next link speed change.

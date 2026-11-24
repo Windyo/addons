@@ -24,6 +24,7 @@ RETRY=$(opt retry_after_crash)
 export NV_MODULE_PARAMS
 NV_MODULE_PARAMS=$(opt module_params)
 AUTO_RECOVER=$(opt auto_recover)
+PCIE_SUMMARY=/tmp/pcie-watch.json
 HOT_C=$(opt hot_c)
 COOL_C=$(opt cool_c)
 BOOT=$(cat /proc/sys/kernel/random/boot_id)
@@ -149,6 +150,22 @@ gpu_stage() {
   GPU_STATE=ready
 }
 
+# nvml_pcie -> JSON: the GPU's own link counters and speeds from nvidia-smi -q. "Replays" counts TLPs
+# the GPU had to resend (no ACK in time, or a NAK for a corrupted one); nothing clears it before reset.
+nvml_pcie() {
+  local j
+  j=$(nvidia-smi -q 2>/dev/null | awk -F' : ' '
+    /PCIe Generation/ {s = "gen"; next}
+    /Link Width/ {s = "width"; next}
+    /Bridge Chip|Replays|Replay Number|Tx Throughput/ {s = ""}
+    s == "gen" && NF == 2 {k = $1; gsub(/^ +| +$/, "", k); gsub(/ /, "_", k); v = $2; gsub(/ /, "", v)
+                           o = o sprintf("\"gen_%s\": \"%s\", ", tolower(k), v)}
+    /Replays Since Reset/ {v = $2; gsub(/ /, "", v); o = o sprintf("\"replays\": \"%s\", ", v)}
+    /Replay Number Rollovers/ {v = $2; gsub(/ /, "", v); o = o sprintf("\"replay_rollovers\": \"%s\", ", v)}
+    END {sub(/, $/, "", o); print "{" o "}"}')
+  jq -c . <<< "$j" 2>/dev/null || echo '{}'
+}
+
 # log_platform_state: read-only facts the GPU faults may depend on, logged at start and on gpu_error.
 # PCIe: link speed/width, ASPM, relaxed ordering/no-snoop, and the latched error bits of the GPU and
 # its root port (the HAOS kernel has no AER driver, so link errors are never reported otherwise).
@@ -156,6 +173,8 @@ log_platform_state() {
   local gpu l
   gpu=$(jq -r '.pci // empty' <<< "$ATTRS")
   [ -n "$gpu" ] && python3 /usr/local/bin/nv-pcie.py "$gpu" 2>&1 | while IFS= read -r l; do log "pcie: $l"; done
+  log "nvml pcie: $(nvml_pcie)"
+  [ -f "$PCIE_SUMMARY" ] && log "pcie watch: $(cat "$PCIE_SUMMARY")"
   log "driver params: $(tr '\n' ' ' < /proc/driver/nvidia/params 2>/dev/null | sed 's/  */ /g')"
   log "kernel cmdline: $(cat /proc/cmdline)"
   # efifb draws the text console into the start of BAR1; the driver must keep that range mapped
@@ -247,6 +266,24 @@ if [ "$GPU_STATE" = ready ]; then
   else
     log "WARNING: cannot mount a private sysfs (console binding unchanged)"
   fi
+  # PCIe link speed cap (root port Target Link Speed; 0 = leave it, or undo an earlier cap this boot).
+  # The driver changes the link speed itself (gen 1 idle, gen 3 under load); the cap holds from the
+  # next change. Test for the faults: the link logs correctable errors (receiver error, bad TLP,
+  # replay timeout) and the faults come with dense command traffic.
+  gpu=$(jq -r '.pci // empty' <<< "$ATTRS")
+  if mountpoint -q "$SYSRW" && [ -n "$gpu" ]; then
+    capr=$(python3 /usr/local/bin/nv-pcie.py cap "$gpu" "$SYSRW" "$(opt pcie_max_gen)" "$DATA/pcie-cap.json" 2>&1 | tail -n 1)
+    log "pcie_max_gen=$(opt pcie_max_gen): $capr"
+    if jq -e . > /dev/null 2>&1 <<< "$capr"; then
+      ATTRS=$(jq -n --argjson a "$ATTRS" --argjson c "$capr" '$a + {pcie_cap: $c}')
+    fi
+    # Link error watcher: timestamps every latched error (and clears it), counts on the sensor,
+    # events also in /share/nvidia/pcie-events.log (fsynced).
+    if [ "$(opt pcie_watch)" = true ]; then
+      python3 -u /usr/local/bin/nv-pcie.py watch "$gpu" "$SYSRW" 0.5 "$PCIE_SUMMARY" "$SHARE/pcie-events.log" 2>&1 \
+        | while IFS= read -r l; do log "pcie event: $l"; done &
+    fi
+  fi
   # Clock offsets (NVML, no X): probe what the card accepts, apply the configured ones (0 = none).
   clk=$(python3 /usr/local/bin/nv-clocks.py "$(opt core_offset_mhz)" "$(opt mem_offset_mhz)" 2>&1 | tail -n 1)
   log "clock offsets: $clk"
@@ -287,12 +324,18 @@ host_reset() {   # host_reset <reason>
   /usr/local/bin/nv-host-reset.sh "$1"
 }
 
-# stdin commands (hassio.addon_stdin): "host-reset" resets the host now, whatever the GPU state.
+# stdin commands (hassio.addon_stdin): "host-reset" resets the host now, whatever the GPU state;
+# "pcie" logs the link state, the GPU's replay counters and the error watcher's counts (read-only).
 ( while IFS= read -r cmd; do
     case "$cmd" in
       host-reset) host_reset "manual (stdin)" ;;
+      pcie)
+        gpu=$(jq -r '.pci // empty' <<< "$ATTRS")
+        [ -n "$gpu" ] && python3 /usr/local/bin/nv-pcie.py "$gpu" 2>&1 | while IFS= read -r l; do log "pcie: $l"; done
+        log "nvml pcie: $(nvml_pcie)"
+        log "pcie watch: $(cat "$PCIE_SUMMARY" 2>/dev/null || echo 'not running')" ;;
       "") ;;
-      *) log "stdin: unknown command '$cmd' (known: host-reset)" ;;
+      *) log "stdin: unknown command '$cmd' (known: host-reset, pcie)" ;;
     esac
   done ) &
 
@@ -355,8 +398,11 @@ while true; do
     a=$(jq -n --argjson a "$ATTRS" --arg t "$THERMAL" --argjson p "$procs" --arg h "$HOT_C" --arg c "$COOL_C" \
       --argjson nb "$([ -f "$CACHE/nvidia.ko" ] && echo true || echo false)" \
       --argjson k "$(kernel_gpu_lines)" \
-      '$a + {thermal: $t, hot_c: $h, cool_c: $c, processes: $p, next_boot_cache: $nb, kernel_gpu_errors: $k}')
+      --argjson pw "$(jq -c . "$PCIE_SUMMARY" 2>/dev/null || echo null)" \
+      '$a + {thermal: $t, hot_c: $h, cool_c: $c, processes: $p, next_boot_cache: $nb, kernel_gpu_errors: $k,
+             pcie_watch: $pw}')
     if [ -n "$row" ]; then
+      a=$(jq -n --argjson a "$a" --argjson np "$(nvml_pcie)" '$a + {nvml_pcie: $np}')
       a=$(jq -n --argjson a "$a" --arg r "$row" '($r | split(", ")) as $f
         | $a + {gpu_name: $f[0], vram_total_mib: $f[1], vram_used_mib: $f[2], temperature_c: $f[3],
                 power_w: $f[4], pstate: $f[5], utilization_pct: $f[6], sm_clock_mhz: $f[7],

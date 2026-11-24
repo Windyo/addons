@@ -52,6 +52,8 @@ cool threshold.
 | `core_offset_mhz` | `0` | Negative core clock offset in MHz (NVML), applied at every start. Lowers the top boost clock; idle is unaffected. |
 | `mem_offset_mhz` | `0` | Negative memory clock offset in MHz. |
 | `console_unbind` | `false` | Detach the text console from the GPU's framebuffer (the laptop screen stops showing console text). |
+| `pcie_watch` | `true` | Timestamp every PCIe link error of the GPU and its port (read and clear the latched bits every 0.5 s). Counts on the sensor (`pcie_watch`), events in the log and in `/share/nvidia/pcie-events.log`. |
+| `pcie_max_gen` | `0` | Cap the GPU's PCIe link at this generation (1-3) through the port's Target Link Speed, as a BIOS "PCIe Gen" setting does. 0 = no cap; it also undoes a cap set earlier in the same boot. Holds from the next speed change (the driver changes speed between idle and load). |
 | `module_params` | `""` | Extra `nvidia.ko` parameters (space-separated `NVreg_...=value`), applied when the add-on loads the driver, i.e. after the next host reboot. |
 
 ## Host reset after a lost GPU
@@ -63,6 +65,7 @@ platform reset through port CF9h, which also cuts the GPU's power, and the machi
 itself. Unsaved data from the last seconds can be lost; the file systems recover at boot.
 
 - Manual: call `hassio.addon_stdin` with `addon: 8634c18d_nvidia-driver` and `input: host-reset`.
+  (`input: pcie` only logs the PCIe link state, the GPU's replay counters and the error counts.)
   This resets the host whatever the GPU state, so use it only when the GPU is lost.
 - Automatic: switch on `auto_recover`.
 

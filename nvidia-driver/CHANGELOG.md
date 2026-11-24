@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.8
+
+- PCIe link error watcher (option `pcie_watch`, on by default). The GPU and its root port latch
+  correctable link errors (on 2026-11-24: receiver error, bad TLP, replay timer timeout), but HAOS
+  has no AER driver, so nothing ever reported when they happened. Every 0.5 s the add-on now reads
+  and clears those bits. Each error gets a log line with its UTC time, the link speed and the
+  seconds since the last speed change. The counts go to the sensor (`pcie_watch`), and the events
+  to `/share/nvidia/pcie-events.log` with an fsync, because the host journal was lost in a hard
+  power-off that day.
+- Option `pcie_max_gen` (0 = no cap): caps the link at PCIe gen 1, 2 or 3 through the root port's
+  Target Link Speed, as a BIOS "PCIe Gen" setting does. 0 undoes a cap set earlier in the boot.
+  This is the test for the link hypothesis: the faults come with dense command traffic at gen 3.
+- The sensor also shows the GPU's own link counters (`nvml_pcie`: replays since reset, replay
+  rollovers, current and host-max PCIe generation). Stdin command `pcie` logs all of it on demand.
+
 ## 0.1.7
 
 - Option `console_unbind` (off by default): detaches the text console from the EFI framebuffer,

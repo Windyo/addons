@@ -1,6 +1,6 @@
 ---
 name: NVIDIA Driver
-version: 0.1.7
+version: 0.1.8
 slug: nvidia-driver
 description: >-
   Builds, loads and monitors the NVIDIA driver on HAOS (Pascal / driver 580) and publishes the
@@ -27,7 +27,7 @@ privileged:
   # /dev/port: CF9h full platform reset when the GPU has wedged the host (nv-host-reset.sh)
   - SYS_RAWIO
 apparmor: false
-# "host-reset" via hassio.addon_stdin
+# "host-reset" and "pcie" via hassio.addon_stdin
 stdin: true
 # /share/nvidia/state.json: the contract GPU consumers read.
 map:
@@ -47,6 +47,8 @@ options:
   core_offset_mhz: 0
   mem_offset_mhz: 0
   console_unbind: false
+  pcie_watch: true
+  pcie_max_gen: 0
 schema:
   load_driver: bool
   build_jobs: int(1,8)
@@ -57,4 +59,6 @@ schema:
   core_offset_mhz: int(-500,0)
   mem_offset_mhz: int(-1000,0)
   console_unbind: bool
+  pcie_watch: bool
+  pcie_max_gen: int(0,3)
   module_params: match(^(NVreg_[A-Za-z0-9]+=[A-Za-z0-9_.;=]+( |$))*$)
