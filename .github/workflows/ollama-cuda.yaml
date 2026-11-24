@@ -23,6 +23,13 @@ jobs:
           yq -e '.full_access == true' ollama-cuda/config.yaml
           yq -e '(has("kernel_modules") or has("privileged") or has("apparmor") or has("ports") or has("image")) | not' ollama-cuda/config.yaml
 
+      # The search router end to end without a GPU: the ollama client HA 2026.11 pins -> the proxy ->
+      # a fake Ollama replaying answers Qwen3-4B really gave.
+      - name: Search router
+        run: |
+          python3 -m venv /tmp/rt && /tmp/rt/bin/pip -q install ollama==0.6.2
+          /tmp/rt/bin/python ollama-cuda/tests/test_search_router.py
+
       - name: Build image (same Dockerfile the Supervisor builds)
         run: |
           docker build --build-arg BUILD_VERSION="$(yq -r .version ollama-cuda/config.yaml)" -t ollama-cuda:test ollama-cuda
@@ -32,7 +39,7 @@ jobs:
         run: |
           docker run --rm ollama-cuda:test bash -c '
             set -e
-            python3 -I -m py_compile /usr/local/bin/main.py /usr/local/bin/bench.py
+            python3 -I -m py_compile /usr/local/bin/main.py /usr/local/bin/bench.py /usr/local/bin/search_router.py
             ollama --version
             ls /usr/lib/ollama
             test -d /usr/lib/ollama/cuda_v12 && test ! -e /usr/lib/ollama/cuda_v13

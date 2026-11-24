@@ -7,6 +7,8 @@
    unavailable) instead of heating the card further. Everything else passes through.
 3. Pulls the model if missing, warms it up with keep_alive -1, checks it sits fully in VRAM.
 4. Publishes sensor.ollama_cuda_status every minute.
+5. Search router (option `search_router`, search_router.py): for chats that offer web_search, the
+   proxy decides when to search instead of the model, which deflects ("I couldn't find…").
 Option `benchmark`: runs the phase-3 matrix first (bench.py) and publishes sensor.ollama_cuda_benchmark.
 """
 import http.client
@@ -21,6 +23,8 @@ import threading
 import time
 import urllib.request
 from datetime import datetime, timezone
+
+import search_router
 
 STATE_FILE = "/share/nvidia/state.json"
 NV_VERSION = open("/opt/nvidia/VERSION").read().strip()
@@ -40,7 +44,8 @@ BOOT = open("/proc/sys/kernel/random/boot_id").read().strip()
 FAULT_FILE = "/data/gpu_fault.json"
 
 status = {"state": "starting", "thermal": "ok", "thermal_source": None, "refused_hot": 0,
-          "last_chat_ms": None, "last_chat_at": None, "model": OPTS["model"]}
+          "last_chat_ms": None, "last_chat_at": None, "model": OPTS["model"],
+          "search_router": {"fresh": 0, "deflection": 0, "model": 0}, "last_search_route": None}
 lock = threading.Lock()
 ollama = None
 stopping = False
@@ -176,6 +181,14 @@ class Gate(http.server.BaseHTTPRequestHandler):
             with lock:
                 status["refused_hot"] += 1
             return self._reply(503, {"error": "GPU too hot, try again in a minute"})
+        route, info = "pass", None
+        if gated and path == "/api/chat" and body and OPTS.get("search_router", True):
+            try:
+                route, info = search_router.plan(json.loads(body))
+            except ValueError:
+                pass
+        if route == "search":
+            return self._search(info, "fresh", "fresh question")
         headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP | {"host"}}
         if gated and body:
             body = cap_answer(body)
@@ -189,6 +202,26 @@ class Gate(http.server.BaseHTTPRequestHandler):
         except OSError:
             conn.close()
             return self._reply(502, {"error": "ollama is not up yet"})
+        held = []
+        if route == "guard" and info["stream"] and up.status == 200:
+            # Hold the start of the answer (Home Assistant only starts speaking after 60 characters
+            # anyway). A deflection is dropped and replaced by a search; anything else is released.
+            said = ""
+            while line := up.readline():
+                held.append(line)
+                try:
+                    part = json.loads(line)
+                except ValueError:
+                    break
+                msg = part.get("message") or {}
+                said += msg.get("content") or ""
+                if msg.get("tool_calls") or part.get("done") or search_router.release(said):
+                    break
+            if not any(b'"tool_calls"' in x for x in held) and search_router.is_deflection(said):
+                conn.close()  # Ollama stops generating when the client goes away
+                return self._search(info, "deflection", f"model said: {said.strip()[:100]}")
+            with lock:
+                status["search_router"]["model"] += 1
         try:
             self.send_response(up.status)
             for k, v in up.getheaders():
@@ -202,6 +235,10 @@ class Gate(http.server.BaseHTTPRequestHandler):
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
             try:
+                if held:
+                    data = b"".join(held)
+                    self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
+                    self.wfile.flush()
                 while chunk := up.read1(65536):
                     self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
                     self.wfile.flush()
@@ -223,6 +260,19 @@ class Gate(http.server.BaseHTTPRequestHandler):
         elif gated and up.status >= 500:
             # Ollama answers 500 when the runner died (e.g. "CUDA error: an illegal instruction").
             threading.Thread(target=check_runner, args=(f"chat returned HTTP {up.status}",), daemon=True).start()
+
+    def _search(self, info, kind, why):
+        """Reply to a chat with "Let me check." plus a web_search call (search_router.py)."""
+        data, ctype = search_router.search_reply(info)
+        with lock:
+            status["search_router"][kind] += 1
+            status["last_search_route"] = {"at": now(), "kind": kind, "query": info["query"]}
+        log(f"search router: {why} -> web_search({info['query']!r}) [{info['lang']}]")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     do_GET = do_POST = do_DELETE = do_HEAD = do_PUT = _proxy
 

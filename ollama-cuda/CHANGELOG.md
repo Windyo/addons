@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.7
+
+- Search router (option `search_router`, on by default), only for chats that offer a `web_search`
+  tool: the model searched only for stock prices and otherwise answered "I couldn't find…".
+  - A fresh question (news, latest, price, weather, score, search… / actualité, dernier, météo,
+    cherche…) is answered by the proxy itself with "Let me check." / "Je regarde." and a
+    `web_search` call with the question; the model answers once the results are in.
+  - Otherwise the model's first sentence is held; a deflection ("I couldn't find", "I can't
+    provide", "je n'ai pas…") is dropped and replaced by the same search.
+  - After a search the model's answer passes untouched.
+  - Counts and the last route in `sensor.ollama_cuda_status` (`search_router`, `last_search_route`).
+
 ## 0.1.6
 
 - The start line logs launch blocking and the answer cap too.

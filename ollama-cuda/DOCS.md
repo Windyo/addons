@@ -20,6 +20,16 @@ house control. Needs the **NVIDIA Driver** add-on.
 Ollama integration URL: `http://8634c18d-ollama-cuda:11434`. The port is not published to the
 network (Ollama has no authentication).
 
+### Search router (option `search_router`, on)
+Only for an agent that has the Web Search add-on's `web_search` tool. The small model rarely
+decides to search by itself and answers "I couldn't find…" instead, so the add-on decides:
+- a fresh question (news, latest, price, weather, score, "search…", or the French equivalents) is
+  answered at once with "Let me check." / "Je regarde." and a search for the question;
+- otherwise the model answers, but if its first sentence is "I couldn't find / I can't provide…"
+  without a search, that sentence is dropped (never spoken) and the search runs instead;
+- after a search, the model's answer passes unchanged.
+The reply language follows the agent's instructions line "Reply in French." / "Reply in English.".
+
 ## Before installing
 
 - Install and start the **NVIDIA Driver** add-on first.

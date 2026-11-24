@@ -45,3 +45,9 @@ configuration:
     description: >-
       Tokens per answer when the client sets no limit (Home Assistant sets none). Stops a looping
       answer from holding the GPU at full load. 400 tokens is about 300 words.
+  search_router:
+    name: Search router
+    description: >-
+      For the web agent (chats offering web_search): fresh questions (news, prices, weather,
+      "search…") get a web search at once, and an answer that starts "I couldn't find…" without a
+      search is replaced by a search. Off = the model alone decides.
